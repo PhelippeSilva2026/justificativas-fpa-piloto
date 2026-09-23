@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: justificativas-fpa-piloto
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GCP_PROJECT_ID
+        value: vtal-fpea-prd
+      - key: GCP_SERVICE_ACCOUNT_KEY
+        sync: false

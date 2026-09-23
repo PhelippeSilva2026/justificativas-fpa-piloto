@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+*.log
+server/bucket_cache
+server/service-account.json

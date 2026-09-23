@@ -1,0 +1,8 @@
+{
+  "name": "Remix NIO Fibra - Análise DRE \u0026 Gerador Waterfall PPTX",
+  "description": "Aplicação executiva da NIO Fibra para análise de DRE, justificativas de desvios, gráficos Waterfall dinâmicos e exportação de slides em PowerPoint (.pptx).",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

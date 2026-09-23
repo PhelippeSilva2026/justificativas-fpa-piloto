@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NIO Fibra - Análise DRE & Gerador Waterfall PPTX</title>
+  <meta name="description" content="Aplicação executiva da operadora NIO para análise de variações de DRE, gráficos Waterfall (Mês e YTD) e exportação de slides executivos em PowerPoint (.pptx).">
+  
+  <!-- Fontes Oficiais NIO -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            nio: {
+              bg: '#F6F2EE',
+              dark: '#192B1C',
+              deep: '#14412A',
+              sage: '#A7AC98',
+              neon: '#39FF00',
+              danger: '#8B0000',
+            }
+          },
+          fontFamily: {
+            sans: ['Plus Jakarta Sans', 'Inter', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- SheetJS (xlsx) CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  
+  <!-- PptxGenJS CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+
+  <style>
+    body {
+      background-color: #F6F2EE;
+      color: #192B1C;
+      font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+    }
+    .waterfall-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-[#39FF00] selection:text-[#192B1C]">
+
+  <!-- HEADER EXECUTIVO NIO -->
+  <header class="sticky top-0 z-40 bg-[#14412A] text-white border-b border-[#192B1C] shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-4">
+        <div class="bg-white px-3 py-1.5 rounded-2xl flex items-center shadow-sm">
+          <!-- Logo NIO SVG Fiel Oficial -->
+          <svg viewBox="0 0 500 240" class="h-8 w-auto" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="nio-head-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#BEBEBE" />
+                <stop offset="25%" stop-color="#888888" />
+                <stop offset="65%" stop-color="#333333" />
+                <stop offset="100%" stop-color="#000000" />
+              </linearGradient>
+            </defs>
+            <g fill="#000000">
+              <rect x="45" y="78" width="36" height="122" />
+              <path d="M 81 78 C 81 78, 102 40, 138 40 C 174 40, 174 74, 174 104 L 174 200 L 138 200 L 138 108 C 138 86, 136 74, 122 74 C 107 74, 98 88, 98 108 L 98 200 L 81 200 Z" />
+            </g>
+            <circle cx="230" cy="63" r="23" fill="#000000" />
+            <rect x="207" y="94" width="46" height="106" rx="23" ry="23" fill="url(#nio-head-grad)" />
+            <path fill="#000000" fill-rule="evenodd" d="M 370 40 C 414.18 40, 450 75.82, 450 120 C 450 164.18, 414.18 200, 370 200 C 325.82 200, 290 164.18, 290 120 C 290 75.82, 325.82 40, 370 40 Z M 370 76 C 345.7 76, 326 95.7, 326 120 C 326 144.3, 345.7, 164, 370 164 C 394.3 164, 414 144.3, 414 120 C 414 95.7, 394.3 76, 370 76 Z" />
+          </svg>
+        </div>
+        <div>
+          <div class="text-[11px] font-bold text-[#39FF00] tracking-wider uppercase flex items-center gap-1.5">
+            <span>Controladoria & FP&A</span>
+            <span class="w-1.5 h-1.5 rounded-full bg-[#39FF00]"></span>
+            <span class="text-white/80 font-medium">NIO Fibra</span>
+          </div>
+          <div class="text-sm font-bold text-white tracking-tight">
+            Análise DRE & Gerador Waterfall PPTX
+          </div>
+        </div>
+      </div>
+
+      <!-- Período DRE (D2 / D3) -->
+      <div class="hidden md:flex items-center gap-2 bg-[#192B1C]/60 px-3.5 py-1.5 rounded-full border border-[#A7AC98]/30 text-xs">
+        <span class="text-[#A7AC98]">Período DRE:</span>
+        <span id="label-month-prev" class="font-semibold text-white/90">Jul/2026</span>
+        <span class="text-[#39FF00]">→</span>
+        <span id="label-month-curr" class="font-bold text-[#39FF00]">Ago/2026</span>
+      </div>
+
+      <!-- Ações -->
+      <div class="flex items-center gap-2.5">
+        <button id="btn-export-pptx" class="px-5 py-2.5 rounded-full bg-[#39FF00] text-[#192B1C] font-extrabold text-xs hover:bg-[#32e000] active:scale-95 transition-all shadow-md flex items-center gap-2 cursor-pointer">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+          <span>Exportar Slide (.pptx)</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTEÚDO PRINCIPAL -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
+
+    <!-- LINHA 1: CARD 1 (Importar Planilha DRE) + CARD 2 (Selecionar Linha de Despesa N3) -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+
+      <!-- CARD 1: 1. Importar Planilha DRE -->
+      <div class="lg:col-span-4 bg-white rounded-3xl p-6 border border-[#A7AC98]/40 shadow-sm flex flex-col justify-between">
+        <input type="file" id="file-input" accept=".xlsx,.xls,.csv" class="hidden">
+        <div>
+          <h2 class="text-base font-bold text-[#14412A]">1. Importar Planilha DRE</h2>
+          <p class="text-xs text-[#6E7769] mt-0.5">Arraste seu arquivo Excel (.xlsx). Detectamos o cabeçalho e colunas automaticamente.</p>
+        </div>
+
+        <!-- Caixa de Drag & Drop Interna -->
+        <div id="drop-zone" class="my-4 border-2 border-dashed border-[#A7AC98]/80 bg-[#F6F2EE]/40 hover:bg-[#F6F2EE] hover:border-[#14412A] rounded-2xl p-5 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[120px]" onclick="document.getElementById('file-input').click()">
+          <div class="text-[#8C9283] mb-1.5">
+            <svg class="w-7 h-7 text-[#6E7769]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+          </div>
+          <div class="text-xs font-bold text-[#192B1C]">Clique ou arraste a planilha aqui</div>
+          <div class="text-[11px] text-[#8C9283] mt-0.5">D2 (Mês Ant.) / D3 (Mês Atual) mapeados de forma resiliente</div>
+        </div>
+
+        <!-- Status e Ações Rápidas -->
+        <div class="flex items-center justify-between text-[11px] pt-1 border-t border-[#F6F2EE]">
+          <span id="file-status" class="text-[#14412A] font-semibold truncate max-w-[180px]">Nenhum arquivo importado</span>
+          <div class="flex items-center gap-2">
+            <button id="btn-load-sample" class="text-[11px] text-[#14412A] font-semibold hover:underline cursor-pointer">Exemplo NIO</button>
+            <span class="text-[#A7AC98]">•</span>
+            <button id="btn-download-template" class="text-[11px] text-[#14412A] font-semibold hover:underline cursor-pointer">Modelo .xlsx</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 2: 2. Selecionar Linha de Despesa (N3) -->
+      <div class="lg:col-span-8 bg-white rounded-3xl p-6 border border-[#A7AC98]/40 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <h2 class="text-base font-bold text-[#14412A]">2. Selecionar Linha de Despesa (N3)</h2>
+          <span id="rows-count" class="text-xs text-[#8C9283] font-medium">0 linhas disponíveis</span>
+        </div>
+
+        <div class="relative my-3">
+          <select id="select-n3" class="w-full appearance-none bg-white border border-[#A7AC98]/80 text-[#192B1C] text-xs font-semibold rounded-2xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-[#14412A] cursor-pointer"></select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-[#6E7769]">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+          </div>
+        </div>
+
+        <!-- 4 Mini Boxes de Metadados -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5 my-2">
+          <div class="bg-[#F6F2EE]/50 border border-[#A7AC98]/30 rounded-2xl p-2.5">
+            <div class="text-[9px] font-bold text-[#8C9283] tracking-wider uppercase">RESPONSÁVEL</div>
+            <div id="meta-responsavel" class="text-xs font-bold text-[#192B1C] truncate mt-0.5">-</div>
+          </div>
+          <div class="bg-[#F6F2EE]/50 border border-[#A7AC98]/30 rounded-2xl p-2.5">
+            <div class="text-[9px] font-bold text-[#8C9283] tracking-wider uppercase">GRUPO / CATEGORIA</div>
+            <div id="meta-grupo-cat" class="text-xs font-bold text-[#192B1C] truncate mt-0.5">-</div>
+          </div>
+          <div class="bg-[#F6F2EE]/50 border border-[#A7AC98]/30 rounded-2xl p-2.5">
+            <div class="text-[9px] font-bold text-[#8C9283] tracking-wider uppercase">REAL M-1 VS REAL ATUAL</div>
+            <div id="meta-real-m1-vs-curr" class="text-xs font-bold text-[#192B1C] truncate mt-0.5">-</div>
+          </div>
+          <div class="bg-[#F6F2EE]/50 border border-[#A7AC98]/30 rounded-2xl p-2.5">
+            <div class="text-[9px] font-bold text-[#8C9283] tracking-wider uppercase">REAL VS ORÇADO MÊS</div>
+            <div id="meta-real-vs-orc" class="text-xs font-bold text-[#192B1C] truncate mt-0.5">-</div>
+          </div>
+        </div>
+
+        <!-- Footer com Status de Fechamento -->
+        <div class="flex items-center justify-between pt-2.5 border-t border-[#F6F2EE] text-xs">
+          <span class="text-[#6E7769] font-medium text-xs">Status de Fechamento dos Desvios:</span>
+          <div id="consistency-badge" class="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold bg-[#F6F2EE] text-[#8C9283] border border-[#A7AC98]/40">Nenhum dado selecionado</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LINHA 2: 3 CARDS DE IMPACTOS (MoM, Mês vs Orçado, YTD vs Orçado) -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+      <!-- CARD MoM -->
+      <div class="bg-white rounded-3xl p-5 border border-[#A7AC98]/40 shadow-sm flex flex-col justify-between min-h-[220px]">
+        <div class="flex items-start justify-between gap-2 pb-3 border-b border-[#F6F2EE]">
+          <div>
+            <h3 class="text-sm font-bold text-[#14412A]">MoM (vs Mês Anterior)</h3>
+            <div class="text-[11px] text-[#6E7769] font-medium mt-0.5">Δ Teórico: <span id="delta-teorico-mom" class="font-semibold text-[#192B1C]">R$ 0,00</span></div>
+          </div>
+          <button onclick="addImpactToType('mom')" class="inline-flex items-center gap-1 bg-[#14412A] hover:bg-[#192B1C] text-white text-xs font-bold px-3.5 py-1.5 rounded-full shadow-xs cursor-pointer">
+            <span class="text-[#39FF00]">+</span> Impacto
+          </button>
+        </div>
+        <div id="impacts-list-mom" class="py-2.5 flex-1 overflow-y-auto max-h-[190px] space-y-2"></div>
+        <div class="pt-2.5 border-t border-[#F6F2EE] flex items-center justify-between text-xs">
+          <div class="text-[11px] text-[#6E7769]">Soma: <strong id="soma-mom" class="font-bold text-[#192B1C]">R$ 0,00</strong></div>
+          <div class="text-[11px] text-[#6E7769]">Pendente: <strong id="pend-mom" class="font-bold text-[#14412A]">R$ 0,00</strong></div>
+        </div>
+      </div>
+
+      <!-- CARD Mês vs Orçado -->
+      <div class="bg-white rounded-3xl p-5 border border-[#A7AC98]/40 shadow-sm flex flex-col justify-between min-h-[220px]">
+        <div class="flex items-start justify-between gap-2 pb-3 border-b border-[#F6F2EE]">
+          <div>
+            <h3 class="text-sm font-bold text-[#14412A]">Mês vs Orçado</h3>
+            <div class="text-[11px] text-[#6E7769] font-medium mt-0.5">Δ Teórico: <span id="delta-teorico-vsorcado" class="font-semibold text-[#192B1C]">R$ 0,00</span></div>
+          </div>
+          <button onclick="addImpactToType('vsOrcado')" class="inline-flex items-center gap-1 bg-[#14412A] hover:bg-[#192B1C] text-white text-xs font-bold px-3.5 py-1.5 rounded-full shadow-xs cursor-pointer">
+            <span class="text-[#39FF00]">+</span> Impacto
+          </button>
+        </div>
+        <div id="impacts-list-vsorcado" class="py-2.5 flex-1 overflow-y-auto max-h-[190px] space-y-2"></div>
+        <div class="pt-2.5 border-t border-[#F6F2EE] flex items-center justify-between text-xs">
+          <div class="text-[11px] text-[#6E7769]">Soma: <strong id="soma-vsorcado" class="font-bold text-[#192B1C]">R$ 0,00</strong></div>
+          <div class="text-[11px] text-[#6E7769]">Pendente: <strong id="pend-vsorcado" class="font-bold text-[#14412A]">R$ 0,00</strong></div>
+        </div>
+      </div>
+
+      <!-- CARD YTD vs Orçado -->
+      <div class="bg-white rounded-3xl p-5 border border-[#A7AC98]/40 shadow-sm flex flex-col justify-between min-h-[220px]">
+        <div class="flex items-start justify-between gap-2 pb-3 border-b border-[#F6F2EE]">
+          <div>
+            <h3 class="text-sm font-bold text-[#14412A]">YTD vs Orçado</h3>
+            <div class="text-[11px] text-[#6E7769] font-medium mt-0.5">Δ Teórico: <span id="delta-teorico-ytd" class="font-semibold text-[#192B1C]">R$ 0,00</span></div>
+          </div>
+          <button onclick="addImpactToType('ytd')" class="inline-flex items-center gap-1 bg-[#14412A] hover:bg-[#192B1C] text-white text-xs font-bold px-3.5 py-1.5 rounded-full shadow-xs cursor-pointer">
+            <span class="text-[#39FF00]">+</span> Impacto
+          </button>
+        </div>
+        <div id="impacts-list-ytd" class="py-2.5 flex-1 overflow-y-auto max-h-[190px] space-y-2"></div>
+        <div class="pt-2.5 border-t border-[#F6F2EE] flex items-center justify-between text-xs">
+          <div class="text-[11px] text-[#6E7769]">Soma: <strong id="soma-ytd" class="font-bold text-[#192B1C]">R$ 0,00</strong></div>
+          <div class="text-[11px] text-[#6E7769]">Pendente: <strong id="pend-ytd" class="font-bold text-[#14412A]">R$ 0,00</strong></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- LINHA 3: 2 CARDS DE GRÁFICOS WATERFALL -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <!-- Gráfico 01: Waterfall Mês -->
+      <div class="bg-white rounded-3xl p-5 border border-[#A7AC98]/40 shadow-sm flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-bold text-[#14412A]">Gráfico 01: Waterfall Mês</h3>
+          <span class="text-[11px] font-semibold text-[#14412A] bg-[#F6F2EE] px-3 py-1 rounded-full border border-[#A7AC98]/40">MoM &amp; Vs Orçado</span>
+        </div>
+        <div class="flex-1 w-full bg-white rounded-2xl p-2 border border-[#A7AC98]/30 min-h-[300px] h-[320px]">
+          <canvas id="canvas-month" class="waterfall-canvas w-full h-full rounded-2xl"></canvas>
+        </div>
+      </div>
+
+      <!-- Gráfico 02: Waterfall YTD -->
+      <div class="bg-white rounded-3xl p-5 border border-[#A7AC98]/40 shadow-sm flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-bold text-[#14412A]">Gráfico 02: Waterfall YTD</h3>
+          <span class="text-[11px] font-semibold text-[#14412A] bg-[#F6F2EE] px-3 py-1 rounded-full border border-[#A7AC98]/40">Acumulado Ano</span>
+        </div>
+        <div class="flex-1 w-full bg-white rounded-2xl p-2 border border-[#A7AC98]/30 min-h-[300px] h-[320px]">
+          <canvas id="canvas-ytd" class="waterfall-canvas w-full h-full rounded-2xl"></canvas>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <footer class="bg-white border-t border-[#A7AC98]/40 py-4 px-6 text-center text-xs text-[#6E7769]">
+    NIO Fibra Óptica — Análise DRE & Gerador Executivo de Waterfall em PowerPoint (.pptx)
+  </footer>
+
+  <!-- SCRIPT VANILLA JS EMBUTIDO COMPLETO -->
+  <script>
+    // 1. Estado da Aplicação
+    let currentWorkbook = null;
+    let selectedRowIndex = 0;
+    let activeTab = 'mom'; // 'mom' | 'vsOrcado' | 'ytd'
+    let justifications = {};
+
+    // Dados Padrão de Exemplo da NIO
+    const sampleWorkbook = {
+      monthPrevious: 'Jul/2026',
+      monthCurrent: 'Ago/2026',
+      rows: [
+        {
+          id: 'dre-1',
+          responsavel: 'Carlos Mendonça (Diretor de Rede & Infra)',
+          n1: 'OPEX REDE',
+          n2: 'Infraestrutura Passiva',
+          n3: 'Compartilhamento de Postes (Concessionárias)',
+          realMMinus1: 8200000,
+          realCurrent: 9450000,
+          orcadoCurrent: 8500000,
+          realYTD: 68400000,
+          orcadoYTD: 64000000
+        },
+        {
+          id: 'dre-2',
+          responsavel: 'Mariana Duarte (Gerente de Operações FTTH)',
+          n1: 'OPEX REDE',
+          n2: 'Manutenção de Campo',
+          n3: 'Reparo Emergencial & Rompimento de Cabos',
+          realMMinus1: 3150000,
+          realCurrent: 2600000,
+          orcadoCurrent: 2900000,
+          realYTD: 22800000,
+          orcadoYTD: 24200000
+        },
+        {
+          id: 'dre-3',
+          responsavel: 'Felipe Alencar (Head de Experiência do Cliente)',
+          n1: 'OPEX CLIENTE',
+          n2: 'Instalações & Habilitações',
+          n3: 'Instalação e Ativação FTTH (Equipes Parceiras)',
+          realMMinus1: 5400000,
+          realCurrent: 6200000,
+          orcadoCurrent: 5800000,
+          realYTD: 44600000,
+          orcadoYTD: 42000000
+        }
+      ]
+    };
+
+    const initialJustifications = {
+      'dre-1': {
+        mom: [
+          { name: 'Reajuste IPCA Contratos Enel', value: 780000, text: 'Aplicação do reajuste anual de cessão de postes conforme índice inflacionário.' },
+          { name: 'Regularização de Pontos Clandestinos', value: 470000, text: 'Vistoria identificou necessidade de readequação de rotas.' }
+        ],
+        vsOrcado: [
+          { name: 'Expansão de Rotas FTTH', value: 650000, text: 'Antecipação de ocupação de 45.000 postes para cronograma comercial.' },
+          { name: 'Desconto Renegociação', value: -300000, text: 'Economia obtida na repactuação de lotes com distribuidoras.' }
+        ],
+        ytd: [
+          { name: 'Aceleração de Ocupação YTD', value: 3200000, text: 'Volume acumulado de HPs passados 18% superior ao plano diretor.' },
+          { name: 'Taxas de Projetos Concessionárias', value: 1200000, text: 'Aumento pontual nas taxas de aprovação de projetos técnicos.' }
+        ]
+      }
+    };
+
+    function formatCurrencyBRL(val, includeSymbol = true) {
+      if (isNaN(val) || val === null || val === undefined) {
+        return includeSymbol ? 'R$ 0,00' : '0,00';
+      }
+      const isNeg = val < 0;
+      const abs = Math.abs(val);
+      const formatted = abs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (!includeSymbol) return isNeg ? `-${formatted}` : formatted;
+      return isNeg ? `-R$ ${formatted}` : `R$ ${formatted}`;
+    }
+
+    function parseCurrencyBRL(input) {
+      if (typeof input === 'number') return isNaN(input) ? 0 : input;
+      if (!input) return 0;
+      let str = String(input).trim();
+      const isNeg = str.includes('-') || (str.startsWith('(') && str.endsWith(')'));
+      str = str.replace(/[R$\s()]/gi, '').replace(/[^\d.,-]/g, '');
+      if (!str || str === '-') return 0;
+      if (str.includes(',') && str.includes('.')) {
+        str = str.replace(/\./g, '').replace(',', '.');
+      } else if (str.includes(',')) {
+        str = str.replace(',', '.');
+      } else if (str.includes('.')) {
+        const parts = str.split('.');
+        if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+          str = parts.join('');
+        }
+      }
+      str = str.replace(/-/g, '');
+      const num = parseFloat(str);
+      if (isNaN(num)) return 0;
+      return isNeg ? -num : num;
+    }
+
+    function formatShortMonthYear(input) {
+      if (!input) return '';
+      const str = String(input).trim();
+      if (!str) return '';
+      const exactMatch = str.match(/^([A-Za-zçÇ]{3})\/(\d{2,4})$/);
+      if (exactMatch) {
+        const rawM = exactMatch[1];
+        let y = exactMatch[2];
+        if (y.length === 2) y = `20${y}`;
+        return `${rawM.charAt(0).toUpperCase() + rawM.slice(1).toLowerCase()}/${y}`;
+      }
+      const monthMap = {
+        jan: 'Jan', janeiro: 'Jan', '01': 'Jan', '1': 'Jan',
+        fev: 'Fev', fevereiro: 'Fev', '02': 'Fev', '2': 'Fev',
+        mar: 'Mar', marco: 'Mar', março: 'Mar', '03': 'Mar', '3': 'Mar',
+        abr: 'Abr', abril: 'Abr', '04': 'Abr', '4': 'Abr',
+        mai: 'Mai', maio: 'Mai', '05': 'Mai', '5': 'Mai',
+        jun: 'Jun', junho: 'Jun', '06': 'Jun', '6': 'Jun',
+        jul: 'Jul', julho: 'Jul', '07': 'Jul', '7': 'Jul',
+        ago: 'Ago', agosto: 'Ago', '08': 'Ago', '8': 'Ago',
+        set: 'Set', setembro: 'Set', '09': 'Set', '9': 'Set',
+        out: 'Out', outubro: 'Out', '10': 'Out',
+        nov: 'Nov', novembro: 'Nov', '11': 'Nov',
+        dez: 'Dez', dezembro: 'Dez', '12': 'Dez',
+      };
+      const serialNum = Number(str);
+      if (!isNaN(serialNum) && serialNum > 30000 && serialNum < 65000) {
+        const d = new Date((serialNum - (25567 + 2)) * 86400 * 1000);
+        const m = d.getUTCMonth() + 1;
+        const y = d.getUTCFullYear();
+        return `${monthMap[String(m)] || 'Ago'}/${y}`;
+      }
+      const norm = str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const yearMatch = norm.match(/\b(20\d\d)\b/) || norm.match(/[\/\-](\d{2,4})/);
+      let year = '2026';
+      if (yearMatch) {
+        const rawY = yearMatch[1].replace(/[^\d]/g, '');
+        year = rawY.length === 2 ? `20${rawY}` : rawY;
+      }
+      for (const [key, abbr] of Object.entries(monthMap)) {
+        if (isNaN(Number(key))) {
+          const regex = new RegExp(`\\b${key}\\b`, 'i');
+          if (regex.test(norm)) return `${abbr}/${year}`;
+        }
+      }
+      return str;
+    }
+
+    function formatBRL(val, compact = false) {
+      if (isNaN(val)) return 'R$ 0';
+      const abs = Math.abs(val);
+      const sign = val < 0 ? '-' : '';
+      if (compact && abs >= 1000000) {
+        return `${sign}R$ ${(abs / 1000000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}M`;
+      }
+      if (compact && abs >= 1000) {
+        return `${sign}R$ ${(abs / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}k`;
+      }
+      return `${sign}R$ ${abs.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    }
+
+    // Inicialização
+    function init() {
+      currentWorkbook = sampleWorkbook;
+      justifications = JSON.parse(JSON.stringify(initialJustifications));
+      populateDropdown();
+      setupEvents();
+      renderCurrentState();
+    }
+
+    function populateDropdown() {
+      const select = document.getElementById('select-n3');
+      select.innerHTML = '';
+      currentWorkbook.rows.forEach((r, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `${r.n3} (${r.n1} > ${r.n2})`;
+        select.appendChild(opt);
+      });
+      select.value = selectedRowIndex;
+      const countEl = document.getElementById('rows-count');
+      if (countEl) {
+        countEl.textContent = `${currentWorkbook.rows.length} ${currentWorkbook.rows.length === 1 ? 'linha disponível' : 'linhas disponíveis'}`;
+      }
+    }
+
+    function setupEvents() {
+      document.getElementById('select-n3').addEventListener('change', (e) => {
+        selectedRowIndex = parseInt(e.target.value, 10);
+        renderCurrentState();
+      });
+
+      document.getElementById('btn-export-pptx').addEventListener('click', exportPPTX);
+      document.getElementById('btn-download-template')?.addEventListener('click', downloadTemplateExcel);
+      document.getElementById('btn-load-sample').addEventListener('click', () => {
+        currentWorkbook = sampleWorkbook;
+        justifications = JSON.parse(JSON.stringify(initialJustifications));
+        selectedRowIndex = 0;
+        populateDropdown();
+        renderCurrentState();
+      });
+
+      // Drag & Drop
+      const dropZone = document.getElementById('drop-zone');
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-[#39FF00]'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-[#39FF00]'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('border-[#39FF00]');
+        if (e.dataTransfer.files.length > 0) processFile(e.dataTransfer.files[0]);
+      });
+
+      document.getElementById('file-input').addEventListener('change', (e) => {
+        if (e.target.files.length > 0) processFile(e.target.files[0]);
+      });
+    }
+
+    function downloadTemplateExcel() {
+      const wb = XLSX.utils.book_new();
+      const source = currentWorkbook && currentWorkbook.rows && currentWorkbook.rows.length > 0
+        ? currentWorkbook
+        : sampleWorkbook;
+
+      const mPrev = formatShortMonthYear(source.monthPrevious) || 'Jul/2026';
+      const mCurr = formatShortMonthYear(source.monthCurrent) || 'Ago/2026';
+
+      const data = [
+        ['DRE GERENCIAL EXECUTIVO - NIO FIBRA ÓPTICA', '', '', ''],
+        ['Mês Anterior:', '', '', mPrev],
+        ['Mês Atual:', '', '', mCurr],
+        [''],
+        [
+          'Responsável', 'N1', 'N2', 'N3',
+          'Real M-1', 'Real 2026', 'Orçado 2026',
+          '∆ Orçado 2026 #', '∆ Orçado 2026 %',
+          'R$ ∆ M-1', '% ∆ M-1',
+          'Real 2026 YTD', 'Orçado 2026 YTD',
+          '∆ Orçado 2026 # YTD', '∆ Orçado 2026 % YTD'
+        ]
+      ];
+
+      source.rows.forEach(r => {
+        const diffOrc = r.realCurrent - r.orcadoCurrent;
+        const diffOrcPct = r.orcadoCurrent ? (diffOrc / r.orcadoCurrent) * 100 : 0;
+        const diffM1 = r.realCurrent - r.realMMinus1;
+        const diffM1Pct = r.realMMinus1 ? (diffM1 / r.realMMinus1) * 100 : 0;
+        const diffYTD = (r.realYTD || 0) - (r.orcadoYTD || 0);
+        const diffYTDPct = r.orcadoYTD ? (diffYTD / r.orcadoYTD) * 100 : 0;
+
+        data.push([
+          r.responsavel, r.n1, r.n2, r.n3,
+          r.realMMinus1, r.realCurrent, r.orcadoCurrent,
+          diffOrc, diffOrcPct,
+          diffM1, diffM1Pct,
+          r.realYTD, r.orcadoYTD,
+          diffYTD, diffYTDPct
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws['!cols'] = [
+        { wch: 32 }, { wch: 18 }, { wch: 28 }, { wch: 42 },
+        { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 18 },
+        { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 18 },
+        { wch: 18 }, { wch: 20 }, { wch: 16 }
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, 'DRE NIO');
+      XLSX.writeFile(wb, 'Planilha_DRE_NIO_Fibra_Modelo.xlsx');
+    }
+
+    function processFile(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+
+          let rawD2 = ws['D2']?.v ? String(ws['D2'].v).trim() : '';
+          let rawD3 = ws['D3']?.v ? String(ws['D3'].v).trim() : '';
+
+          const rowsRaw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+          // Busca resiliente para D2/D3
+          if (!rawD2 || !rawD3) {
+            for (let r = 0; r < Math.min(rowsRaw.length, 5); r++) {
+              const row = rowsRaw[r];
+              if (!Array.isArray(row)) continue;
+              for (let c = 0; c < row.length; c++) {
+                const val = String(row[c] || '').toLowerCase();
+                if ((val.includes('anterior') || val.includes('m-1')) && !rawD2) {
+                  rawD2 = String(row[c + 1] || row[c + 2] || row[c + 3] || '').trim();
+                }
+                if ((val.includes('atual')) && !rawD3) {
+                  rawD3 = String(row[c + 1] || row[c + 2] || row[c + 3] || '').trim();
+                }
+              }
+            }
+          }
+
+          const mPrev = formatShortMonthYear(rawD2 || 'Jul/2026') || 'Jul/2026';
+          const mCurr = formatShortMonthYear(rawD3 || 'Ago/2026') || 'Ago/2026';
+
+          // Acha linha de cabeçalho
+          let headerIdx = -1;
+          for (let r = 0; r < Math.min(rowsRaw.length, 12); r++) {
+            const row = rowsRaw[r];
+            if (Array.isArray(row) && row.some(cell => String(cell).toLowerCase().includes('n3') || String(cell).toLowerCase().includes('subcategoria'))) {
+              headerIdx = r;
+              break;
+            }
+          }
+          if (headerIdx === -1) headerIdx = 4;
+
+          const rows = [];
+          for (let r = headerIdx + 1; r < rowsRaw.length; r++) {
+            const row = rowsRaw[r];
+            if (!row || !row[3] || String(row[3]).trim() === '') continue;
+            rows.push({
+              id: `dre-imported-${r}`,
+              responsavel: String(row[0] || 'Gestor Operacional').trim(),
+              n1: String(row[1] || 'OPEX').trim(),
+              n2: String(row[2] || 'Geral').trim(),
+              n3: String(row[3] || 'Despesa').trim(),
+              realMMinus1: parseFloat(row[4]) || 0,
+              realCurrent: parseFloat(row[5]) || 0,
+              orcadoCurrent: parseFloat(row[6]) || 0,
+              realYTD: parseFloat(row[11]) || (parseFloat(row[5]) || 0) * 8,
+              orcadoYTD: parseFloat(row[12]) || (parseFloat(row[6]) || 0) * 8,
+            });
+          }
+
+          if (rows.length > 0) {
+            currentWorkbook = { monthPrevious: mPrev, monthCurrent: mCurr, rows };
+            selectedRowIndex = 0;
+            populateDropdown();
+            renderCurrentState();
+            document.getElementById('file-status').textContent = `Carregado: ${file.name} (${rows.length} itens)`;
+          } else {
+            alert('Nenhuma linha de despesa válida foi encontrada na planilha importada.');
+          }
+        } catch (err) {
+          alert('Erro ao ler Excel: ' + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function getSelectedRow() {
+      return currentWorkbook.rows[selectedRowIndex];
+    }
+
+    function getRowJustifications(rowId) {
+      if (!justifications[rowId]) {
+        justifications[rowId] = { mom: [], vsOrcado: [], ytd: [] };
+      }
+      return justifications[rowId];
+    }
+
+    function renderCurrentState() {
+      const row = getSelectedRow();
+      if (!row) return;
+
+      document.getElementById('label-month-prev').textContent = currentWorkbook.monthPrevious;
+      document.getElementById('label-month-curr').textContent = currentWorkbook.monthCurrent;
+      document.getElementById('meta-responsavel').textContent = row.responsavel;
+      document.getElementById('meta-grupo-cat').textContent = `${row.n1} / ${row.n2}`;
+      document.getElementById('meta-real-m1-vs-curr').textContent = `${formatBRL(row.realMMinus1, true)} → ${formatBRL(row.realCurrent, true)}`;
+      document.getElementById('meta-real-vs-orc').textContent = `${formatBRL(row.realCurrent, true)} vs ${formatBRL(row.orcadoCurrent, true)}`;
+
+      renderAllImpactCards();
+      renderWaterfalls();
+    }
+
+    function renderAllImpactCards() {
+      const row = getSelectedRow();
+      const jData = getRowJustifications(row.id);
+
+      // 1. MoM
+      const deltaMom = row.realCurrent - row.realMMinus1;
+      document.getElementById('delta-teorico-mom').textContent = formatCurrencyBRL(deltaMom);
+      renderSingleImpactType('mom', 'impacts-list-mom', jData.mom, deltaMom, 'soma-mom', 'pend-mom');
+
+      // 2. Vs Orçado
+      const deltaVsOrc = row.realCurrent - row.orcadoCurrent;
+      document.getElementById('delta-teorico-vsorcado').textContent = formatCurrencyBRL(deltaVsOrc);
+      renderSingleImpactType('vsOrcado', 'impacts-list-vsorcado', jData.vsOrcado, deltaVsOrc, 'soma-vsorcado', 'pend-vsorcado');
+
+      // 3. YTD
+      const deltaYtd = row.realYTD - row.orcadoYTD;
+      document.getElementById('delta-teorico-ytd').textContent = formatCurrencyBRL(deltaYtd);
+      renderSingleImpactType('ytd', 'impacts-list-ytd', jData.ytd, deltaYtd, 'soma-ytd', 'pend-ytd');
+
+      // Status Geral de Fechamento
+      const sumMom = jData.mom.reduce((a, c) => a + c.value, 0);
+      const sumVsOrc = jData.vsOrcado.reduce((a, c) => a + c.value, 0);
+      const sumYtd = jData.ytd.reduce((a, c) => a + c.value, 0);
+
+      const isBalanced = Math.abs(deltaMom - sumMom) < 1 && Math.abs(deltaVsOrc - sumVsOrc) < 1 && Math.abs(deltaYtd - sumYtd) < 1;
+      const badge = document.getElementById('consistency-badge');
+
+      if (isBalanced) {
+        badge.className = 'inline-flex items-center px-3 py-1 rounded-full text-[11px] font-bold bg-[#E8F8EE] text-[#14412A] border border-[#22C55E]/40';
+        badge.textContent = '100% Conciliado / Consistente';
+      } else {
+        badge.className = 'inline-flex items-center px-3 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-300';
+        badge.textContent = 'Pendências de Conciliação';
+      }
+    }
+
+    function renderSingleImpactType(type, containerId, list, deltaTeorico, somaId, pendId) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = '';
+
+      const sum = list.reduce((a, c) => a + (Number(c.value) || 0), 0);
+      const pend = deltaTeorico - sum;
+
+      document.getElementById(somaId).textContent = formatCurrencyBRL(sum);
+      const pendEl = document.getElementById(pendId);
+      pendEl.textContent = formatCurrencyBRL(pend);
+      pendEl.className = Math.abs(pend) < 1 ? 'font-bold text-[#14412A]' : 'font-extrabold text-amber-700';
+
+      if (list.length === 0) {
+        container.innerHTML = '<div class="text-[11px] text-[#8C9283] italic text-center py-4">Nenhum impacto inserido. Clique em "+ Impacto" para discriminar.</div>';
+        return;
+      }
+
+      list.forEach((imp, idx) => {
+        const item = document.createElement('div');
+        item.className = 'bg-[#F6F2EE]/40 border border-[#A7AC98]/30 rounded-2xl p-2.5 space-y-1.5';
+        item.innerHTML = `
+          <div class="flex items-center gap-2">
+            <input type="text" value="${imp.name}" placeholder="Nome do desvio" class="flex-1 min-w-0 bg-white border border-[#A7AC98]/50 rounded-xl px-2 py-1 text-[11px] font-semibold text-[#192B1C]" onchange="updateImpactFieldType('${type}', ${idx}, 'name', this.value)">
+            <input type="text" value="${formatCurrencyBRL(imp.value)}" placeholder="R$ 0,00" class="w-32 sm:w-36 bg-white border border-[#A7AC98]/50 rounded-xl px-2 py-1 text-[11px] font-bold text-right text-[#14412A]" onfocus="this.select()" onblur="updateImpactCurrencyField('${type}', ${idx}, this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+            <button onclick="removeImpactType('${type}', ${idx})" class="text-[#8C9283] hover:text-red-600 p-1 cursor-pointer shrink-0" title="Remover">✕</button>
+          </div>
+          <input type="text" placeholder="Justificativa sucinta para a diretoria..." value="${imp.text || ''}" class="w-full bg-white border border-[#A7AC98]/50 rounded-xl px-2 py-1 text-[10.5px] text-[#333333]" onchange="updateImpactFieldType('${type}', ${idx}, 'text', this.value)">
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    window.updateImpactCurrencyField = function(type, idx, val) {
+      const row = getSelectedRow();
+      const parsed = parseCurrencyBRL(val);
+      getRowJustifications(row.id)[type][idx].value = parsed;
+      renderAllImpactCards();
+      renderWaterfalls();
+    };
+
+    window.addImpactToType = function(type) {
+      const row = getSelectedRow();
+      const jData = getRowJustifications(row.id)[type];
+      jData.push({
+        name: `Desvio ${jData.length + 1}`,
+        value: 100000,
+        text: 'Desvio operacional apurado no período.'
+      });
+      renderAllImpactCards();
+      renderWaterfalls();
+    };
+
+    window.updateImpactFieldType = function(type, idx, field, val) {
+      const row = getSelectedRow();
+      getRowJustifications(row.id)[type][idx][field] = val;
+      renderAllImpactCards();
+      renderWaterfalls();
+    };
+
+    window.removeImpactType = function(type, idx) {
+      const row = getSelectedRow();
+      getRowJustifications(row.id)[type].splice(idx, 1);
+      renderAllImpactCards();
+      renderWaterfalls();
+    };
+
+    // 2. Renderizador Waterfall Canvas
+    function drawWaterfall(canvasId, title, bars) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+
+      const w = rect.width;
+      const h = rect.height;
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, w, h);
+
+      const marginLeft = 35;
+      const marginRight = 35;
+      const marginTop = 38;
+      const marginBottom = 44;
+      const chartW = w - marginLeft - marginRight;
+      const chartH = h - marginTop - marginBottom;
+
+      let min = 0;
+      let max = 0;
+      bars.forEach(b => {
+        min = Math.min(min, b.start, b.end);
+        max = Math.max(max, b.start, b.end);
+      });
+      max = max > 0 ? max * 1.18 : 100;
+
+      // Título
+      ctx.fillStyle = '#14412A';
+      ctx.font = 'bold 16px "Plus Jakarta Sans", Arial, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(title, marginLeft, 14);
+
+      const getY = (val) => marginTop + chartH - (chartH * (val - min)) / (max - min || 1);
+
+      // Linhas conectoras
+      ctx.strokeStyle = '#A7AC98';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      for (let i = 0; i < bars.length - 1; i++) {
+        const slotW = chartW / bars.length;
+        const fromX = marginLeft + (i + 0.8) * slotW;
+        const toX = marginLeft + (i + 1.2) * slotW;
+        const connY = getY(bars[i].end);
+        ctx.beginPath();
+        ctx.moveTo(fromX, connY);
+        ctx.lineTo(toX, connY);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      // Barras
+      const slotW = chartW / bars.length;
+      const barW = Math.max(16, slotW * 0.6);
+
+      bars.forEach((b, idx) => {
+        const x = marginLeft + idx * slotW + (slotW - barW) / 2;
+        const yTop = getY(Math.max(b.start, b.end));
+        const yBottom = getY(Math.min(b.start, b.end));
+        const barH = Math.max(3, yBottom - yTop);
+
+        ctx.fillStyle = b.color;
+        ctx.fillRect(x, yTop, barW, barH);
+
+        // Borda sutil
+        ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+        ctx.strokeRect(x, yTop, barW, barH);
+
+        // Rótulo de Valor acima da barra
+        ctx.fillStyle = '#192B1C';
+        ctx.font = 'bold 11px Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(formatBRL(b.display, true), x + barW / 2, yTop - 5);
+
+        // Rótulo X abaixo: 8px semi-bold (600) conforme solicitado
+        ctx.fillStyle = '#3F4E40';
+        ctx.font = '600 8px Arial, sans-serif';
+        const label = b.label.length > 16 ? b.label.substring(0, 15) + '..' : b.label;
+        ctx.fillText(label, x + barW / 2, h - marginBottom + 14);
+      });
+    }
+
+    function renderWaterfalls() {
+      const row = getSelectedRow();
+      if (!row) return;
+      const j = getRowJustifications(row.id);
+
+      // Gráfico 01 (Mês)
+      const monthBars = [];
+      let acc = row.realMMinus1;
+      monthBars.push({ label: 'Real M-1', start: 0, end: acc, display: acc, color: '#14412A' });
+
+      (j.mom || []).forEach(imp => {
+        const next = acc + imp.value;
+        monthBars.push({ label: imp.name, start: acc, end: next, display: imp.value, color: imp.value < 0 ? '#8B0000' : '#39FF00' });
+        acc = next;
+      });
+
+      monthBars.push({ label: 'Real 2026', start: 0, end: row.realCurrent, display: row.realCurrent, color: '#192B1C' });
+
+      let orcAcc = row.realCurrent;
+      (j.vsOrcado || []).forEach(imp => {
+        const next = orcAcc + imp.value;
+        monthBars.push({ label: imp.name, start: orcAcc, end: next, display: imp.value, color: imp.value < 0 ? '#8B0000' : '#39FF00' });
+        orcAcc = next;
+      });
+
+      monthBars.push({ label: 'Orçado 2026', start: 0, end: row.orcadoCurrent, display: row.orcadoCurrent, color: '#14412A' });
+
+      drawWaterfall('canvas-month', 'Mês', monthBars);
+
+      // Gráfico 02 (YTD)
+      const ytdBars = [];
+      let ytdAcc = row.realYTD;
+      ytdBars.push({ label: 'Real 2026 YTD', start: 0, end: ytdAcc, display: ytdAcc, color: '#192B1C' });
+
+      (j.ytd || []).forEach(imp => {
+        const next = ytdAcc + imp.value;
+        ytdBars.push({ label: imp.name, start: ytdAcc, end: next, display: imp.value, color: imp.value < 0 ? '#8B0000' : '#39FF00' });
+        ytdAcc = next;
+      });
+
+      ytdBars.push({ label: 'Orçado YTD', start: 0, end: row.orcadoYTD, display: row.orcadoYTD, color: '#192B1C' });
+
+      drawWaterfall('canvas-ytd', 'YTD', ytdBars);
+    }
+
+    // 3. Exportação PowerPoint (.pptx)
+    async function exportPPTX() {
+      const row = getSelectedRow();
+      if (!row) return;
+
+      const pptx = new PptxGenJS();
+      pptx.layout = 'LAYOUT_16x9';
+
+      const slide = pptx.addSlide();
+      slide.background = { color: 'FFFFFF' };
+
+      // Título: N1 | N2 | N3 (Arial 18pt, #14412A, Negrito)
+      slide.addText(`${row.n1.toUpperCase()} | ${row.n2} | ${row.n3}`, {
+        x: 0.6, y: 0.4, w: 7.5, h: 0.4,
+        fontFace: 'Arial', fontSize: 18, bold: true, color: '14412A'
+      });
+
+      // Subtítulo: Responsável (Arial 10pt)
+      slide.addText([
+        { text: 'Responsável: ', options: { bold: true, fontSize: 10, fontFace: 'Arial', color: '192B1C' } },
+        { text: row.responsavel, options: { bold: false, fontSize: 10, fontFace: 'Arial', color: '333333' } }
+      ], { x: 0.6, y: 0.8, w: 7.5, h: 0.3 });
+
+      // Rodapé: "USO INTERNO" (Arial 8pt, canto inferior esquerdo)
+      slide.addText('USO INTERNO', {
+        x: 0.6, y: 5.25, w: 3.0, h: 0.2,
+        fontFace: 'Arial', fontSize: 8, color: '8C9283'
+      });
+
+      // Quadrante 1 (Sup Esq): Canvas Mês
+      const canvasMonth = document.getElementById('canvas-month');
+      slide.addImage({ data: canvasMonth.toDataURL(), x: 0.6, y: 1.2, w: 4.2, h: 1.9 });
+
+      // Quadrante 2 (Sup Dir): Variações Mês
+      const j = getRowJustifications(row.id);
+      const momItems = j.mom || [];
+      const vsOrcadoItems = j.vsOrcado || [];
+      const totalMonthCount = momItems.length + vsOrcadoItems.length;
+
+      let mTitle = 11, mSub = 9.5, mBody = 8.5;
+      if (totalMonthCount >= 4) { mTitle = 10; mSub = 8.5; mBody = 7.5; }
+
+      const textRunsMonth = [
+        { text: 'Variações Mês', options: { fontFace: 'Arial', fontSize: mTitle, bold: true, color: '14412A', breakLine: true } },
+        { text: 'MoM', options: { fontFace: 'Arial', fontSize: mSub, bold: true, color: '192B1C', breakLine: true } }
+      ];
+      if (momItems.length === 0) {
+        textRunsMonth.push({ text: '• Sem desvios adicionais informados para MoM.', options: { fontFace: 'Arial', fontSize: mBody, italic: true, color: '666666', breakLine: true } });
+      } else {
+        momItems.forEach(imp => {
+          textRunsMonth.push(
+            { text: `• ${imp.name} (`, options: { fontFace: 'Arial', fontSize: mBody, bold: true } },
+            { text: formatBRL(imp.value, true), options: { fontFace: 'Arial', fontSize: mBody, bold: true, color: imp.value < 0 ? '8B0000' : '14412A' } },
+            { text: `): ${imp.text || 'Desvio operacional apurado.'}`, options: { fontFace: 'Arial', fontSize: mBody, bold: false, breakLine: true } }
+          );
+        });
+      }
+      textRunsMonth.push({ text: 'Vs Orçado', options: { fontFace: 'Arial', fontSize: mSub, bold: true, color: '192B1C', breakLine: true } });
+      if (vsOrcadoItems.length === 0) {
+        textRunsMonth.push({ text: '• Aderência integral ao orçamento previsto no mês.', options: { fontFace: 'Arial', fontSize: mBody, italic: true, color: '666666', breakLine: true } });
+      } else {
+        vsOrcadoItems.forEach(imp => {
+          textRunsMonth.push(
+            { text: `• ${imp.name} (`, options: { fontFace: 'Arial', fontSize: mBody, bold: true } },
+            { text: formatBRL(imp.value, true), options: { fontFace: 'Arial', fontSize: mBody, bold: true, color: imp.value < 0 ? '8B0000' : '14412A' } },
+            { text: `): ${imp.text || 'Justificativa orçamentária.'}`, options: { fontFace: 'Arial', fontSize: mBody, bold: false, breakLine: true } }
+          );
+        });
+      }
+      slide.addText(textRunsMonth, {
+        x: 5.1,
+        y: 1.2,
+        w: 4.3,
+        h: 1.9,
+        fill: { color: 'FFFFFF' },
+        line: { color: 'A7AC98', width: 0.5 },
+        shrinkText: true,
+        wrap: true,
+        valign: 'top',
+        margin: [0.04, 0.06, 0.04, 0.06]
+      });
+
+      // Quadrante 3 (Inf Esq): Canvas YTD
+      const canvasYTD = document.getElementById('canvas-ytd');
+      slide.addImage({ data: canvasYTD.toDataURL(), x: 0.6, y: 3.25, w: 4.2, h: 1.9 });
+
+      // Quadrante 4 (Inf Dir): Explicação Variações YTD
+      const ytdItems = j.ytd || [];
+      let yTitle = 11, ySub = 9.5, yBody = 8.5;
+      if (ytdItems.length >= 3) { yTitle = 10; ySub = 8.5; yBody = 7.5; }
+
+      const textRunsYTD = [
+        { text: 'Explicação das Variações YTD', options: { fontFace: 'Arial', fontSize: yTitle, bold: true, color: '14412A', breakLine: true } },
+        { text: 'Vs Orçado', options: { fontFace: 'Arial', fontSize: ySub, bold: true, color: '192B1C', breakLine: true } }
+      ];
+      if (ytdItems.length === 0) {
+        textRunsYTD.push({ text: '• Execução acumulada YTD em conformidade com as diretrizes da companhia.', options: { fontFace: 'Arial', fontSize: yBody, italic: true, color: '666666', breakLine: true } });
+      } else {
+        ytdItems.forEach(imp => {
+          textRunsYTD.push(
+            { text: `• ${imp.name} (`, options: { fontFace: 'Arial', fontSize: yBody, bold: true } },
+            { text: formatBRL(imp.value, true), options: { fontFace: 'Arial', fontSize: yBody, bold: true, color: imp.value < 0 ? '8B0000' : '14412A' } },
+            { text: `): ${imp.text || 'Impacto acumulado no ano apurado.'}`, options: { fontFace: 'Arial', fontSize: yBody, bold: false, breakLine: true } }
+          );
+        });
+      }
+      slide.addText(textRunsYTD, {
+        x: 5.1,
+        y: 3.25,
+        w: 4.3,
+        h: 1.9,
+        fill: { color: 'FFFFFF' },
+        line: { color: 'A7AC98', width: 0.5 },
+        shrinkText: true,
+        wrap: true,
+        valign: 'top',
+        margin: [0.04, 0.06, 0.04, 0.06]
+      });
+
+      await pptx.writeFile({ fileName: `NIO_Slide_${row.n3.replace(/\\s+/g, '_')}.pptx` });
+    }
+
+    // Inicializa na carga da página
+    window.addEventListener('load', init);
+    window.addEventListener('resize', renderWaterfalls);
+  </script>
+</body>
+</html>
