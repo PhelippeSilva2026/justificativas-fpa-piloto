@@ -14,7 +14,7 @@ export const COMPANIES: Record<CompanyId, CompanyInfo> = {
     headerBorder: 'border-[#1E5C3C]',
     cardBorder: 'border-[#39FF00]/40',
     accentText: 'text-[#39FF00]',
-    storageKey: 'nio_justifications_v1',
+    storageKey: 'nio_justifications_live_v1',
     excelFileName: 'Planilha_DRE_NIO_Fibra.xlsx',
     defaultResponsible: 'Diretoria de Operações & B2C',
     sectors: ['O&M Fibra', 'Cessão de Postes', 'Ativações FTTH', 'CPE Wi-Fi', 'Atendimento NOC']

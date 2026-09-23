@@ -5,7 +5,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { DRERow, DREWorkbook, RowJustifications, CompanyId } from './types';
-import { getSampleWorkbook, getSampleJustifications } from './utils/excelParser';
 import { exportToPowerPoint } from './utils/pptxExport';
 import { calculateDREFromRaw, convertGcpRowsToWorkbook } from './utils/gcpConnector';
 import { COMPANIES, getCompanyWorkbook, getCompanySampleJustifications } from './utils/companyConfigs';
@@ -35,6 +34,7 @@ export default function App() {
     const initialCid = (localStorage.getItem('corp_active_company') as CompanyId) || 'nio';
     return getCompanyWorkbook(initialCid);
   });
+  const [gcpWorkbook, setGcpWorkbook] = useState<DREWorkbook | null>(null);
 
   const [currentFileName, setCurrentFileName] = useState<string>(() => {
     const initialCid = (localStorage.getItem('corp_active_company') as CompanyId) || 'nio';
@@ -64,7 +64,7 @@ export default function App() {
     } catch {
       // Fallback
     }
-    return getCompanySampleJustifications(initialCid);
+    return initialCid === 'nio' ? {} : getCompanySampleJustifications(initialCid);
   });
 
   // Salva automaticamente qualquer alteração de justificativas no armazenamento da empresa ativa
@@ -107,6 +107,7 @@ export default function App() {
 
         if (data.success && Array.isArray(data.rows) && data.rows.length > 0) {
           const wb = convertGcpRowsToWorkbook(data.rows, '2026/8');
+          setGcpWorkbook(wb);
           setWorkbook(wb);
           setCurrentFileName('agente_fpa.DRE_FINAL_EXECUTIVA (GCP)');
           if (wb.rows.length > 0) {
@@ -133,12 +134,24 @@ export default function App() {
     };
   }, []);
 
+  // Mantém a NIO ligada ao workbook real mesmo quando o usuário volta ao
+  // portal e seleciona a empresa novamente.
+  useEffect(() => {
+    if (activeCompany === 'nio' && gcpWorkbook) {
+      setWorkbook(gcpWorkbook);
+      setCurrentFileName('agente_fpa.DRE_FINAL_EXECUTIVA (GCP)');
+      if (gcpWorkbook.rows.length > 0) {
+        setSelectedRowId(gcpWorkbook.rows[0].id);
+      }
+    }
+  }, [activeCompany, gcpWorkbook]);
+
   // Seleção e alternância de empresa (NIO, V.tal, Tecto)
   const handleSelectCompany = (cid: CompanyId) => {
     setActiveCompany(cid);
     localStorage.setItem('corp_active_company', cid);
 
-    const wb = getCompanyWorkbook(cid);
+    const wb = cid === 'nio' && gcpWorkbook ? gcpWorkbook : getCompanyWorkbook(cid);
     setWorkbook(wb);
     setCurrentFileName(COMPANIES[cid].excelFileName);
     if (wb.rows.length > 0) {
@@ -160,8 +173,7 @@ export default function App() {
       }
     } catch {}
 
-    const sampleJust = getCompanySampleJustifications(cid);
-    setJustificationsMap(sampleJust);
+    setJustificationsMap(cid === 'nio' ? {} : getCompanySampleJustifications(cid));
     showToast(`Ambiente ${COMPANIES[cid].name} carregado com sucesso!`, 'success');
   };
 
