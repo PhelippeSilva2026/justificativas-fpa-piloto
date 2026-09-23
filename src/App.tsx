@@ -527,7 +527,7 @@ export default function App() {
   const company = currentCompanyConfig || COMPANIES.nio;
 
   return (
-    <div className="min-h-screen bg-[#F6F2EE] text-[#192B1C] flex flex-col font-sans">
+    <div className={`min-h-screen flex flex-col font-sans ${activeCompany === 'nio' ? 'bg-[#F6F2EE] text-[#192B1C]' : 'bg-[#F3F3F3] text-[#252525]'}`}>
       {/* HEADER EXECUTIVO COM TROCA DE EMPRESA E RETORNO AO PORTAL */}
       <Navbar
         workbook={workbook}

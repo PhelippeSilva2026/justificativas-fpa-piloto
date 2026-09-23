@@ -55,23 +55,23 @@ export const Navbar: React.FC<NavbarProps> = ({
   // Cores dinâmicas do header por empresa
   const headerBgClass =
     currentCompany === 'vtal'
-      ? 'bg-[#0A192F] border-[#1B3A60]'
+      ? 'bg-[#242424] border-black'
       : currentCompany === 'tecto'
-      ? 'bg-[#0F172A] border-[#1E293B]'
+      ? 'bg-[#242424] border-black'
       : 'bg-[#14412A] border-[#192B1C]';
 
   const accentColorText =
     currentCompany === 'vtal'
-      ? 'text-[#00D8F6]'
+      ? 'text-[#80B5A6]'
       : currentCompany === 'tecto'
-      ? 'text-[#10B981]'
+      ? 'text-[#80B5A6]'
       : 'text-[#39FF00]';
 
   const exportBtnBg =
     currentCompany === 'vtal'
-      ? 'bg-[#00D8F6] text-[#0A192F] hover:bg-[#00c4e0]'
+      ? 'bg-[#4F927F] text-white hover:bg-[#437F6E]'
       : currentCompany === 'tecto'
-      ? 'bg-[#10B981] text-[#0F172A] hover:bg-[#0ea372]'
+      ? 'bg-[#4F927F] text-white hover:bg-[#437F6E]'
       : 'bg-[#39FF00] text-[#192B1C] hover:bg-[#32e000]';
 
   return (
@@ -98,7 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base sm:text-lg font-bold text-white tracking-tight leading-none">
-                  Análise de Variações
+                  Análise de Desvios e Justificativas
                 </h1>
                 <span className={`text-[11px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-black/30 border border-white/20 ${accentColorText}`}>
                   {company.shortName}
@@ -123,7 +123,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onClick={() => onSelectCompany(cid)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                   isSelected
-                    ? `${cid === 'vtal' ? 'bg-[#00D8F6] text-[#0A192F]' : cid === 'tecto' ? 'bg-[#10B981] text-[#0F172A]' : 'bg-[#39FF00] text-[#14412A]'} shadow-sm`
+                    ? `${cid === 'vtal' || cid === 'tecto' ? 'bg-[#4F927F] text-white' : 'bg-[#39FF00] text-[#14412A]'} shadow-sm`
                     : 'text-white/75 hover:text-white hover:bg-white/10'
                 }`}
               >
