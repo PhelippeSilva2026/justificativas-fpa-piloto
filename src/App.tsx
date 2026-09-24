@@ -456,7 +456,7 @@ export default function App() {
           id: `mom-${Date.now()}`,
           name: 'Impacto Residual MoM',
           value: momDiff,
-          justification: 'Ajuste de conciliação mensal',
+          justification: '',
         });
       }
     }
@@ -472,9 +472,9 @@ export default function App() {
       } else {
         vsOrcList.push({
           id: `vsorc-${Date.now()}`,
-          name: 'Impacto Orçado Mês',
+          name: 'Impacto Residual Mês vs Orçado',
           value: vsOrcDiff,
-          justification: 'Desvio orçamentário previsto no período',
+          justification: '',
         });
       }
     }
@@ -490,9 +490,9 @@ export default function App() {
       } else {
         ytdList.push({
           id: `ytd-${Date.now()}`,
-          name: 'Impacto Acumulado YTD',
+          name: 'Impacto Residual YTD',
           value: ytdDiff,
-          justification: 'Desvio acumulado no ano conforme apurado',
+          justification: '',
         });
       }
     }
