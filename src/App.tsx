@@ -70,13 +70,13 @@ export default function App() {
   // Salva automaticamente qualquer alteração de justificativas no armazenamento da empresa ativa
   useEffect(() => {
     if (!activeCompany) return;
-    const storageKey = COMPANIES[activeCompany]?.storageKey || 'nio_justifications_v1';
+    const storageKey = `${COMPANIES[activeCompany]?.storageKey || 'nio_justifications_v1'}_${selectedPeriod.replace('/', '_')}`;
     try {
       localStorage.setItem(storageKey, JSON.stringify(justificationsMap));
     } catch (e) {
       console.warn('Erro ao salvar justificativas no localStorage:', e);
     }
-  }, [justificationsMap, activeCompany]);
+  }, [justificationsMap, activeCompany, selectedPeriod]);
   const [activeView, setActiveView] = useState<'dashboard' | 'presentation'>('dashboard');
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isGcpModalOpen, setIsGcpModalOpen] = useState<boolean>(false);
@@ -97,9 +97,16 @@ export default function App() {
   // Ao entrar em uma empresa, carrega as justificativas compartilhadas do Bucket.
   useEffect(() => {
     if (!activeCompany) return;
+    const localKey = `${COMPANIES[activeCompany].storageKey}_${selectedPeriod.replace('/', '_')}`;
+    try {
+      const local = localStorage.getItem(localKey);
+      setJustificationsMap(local ? JSON.parse(local) : {});
+    } catch {
+      setJustificationsMap({});
+    }
     const controller = new AbortController();
 
-    fetch(`/api/gcp/justifications/load-company?companyId=${activeCompany}`, { signal: controller.signal })
+    fetch(`/api/gcp/justifications/load-company?companyId=${activeCompany}&period=${encodeURIComponent(selectedPeriod)}`, { signal: controller.signal })
       .then(async (resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json();
@@ -116,7 +123,7 @@ export default function App() {
       });
 
     return () => controller.abort();
-  }, [activeCompany]);
+  }, [activeCompany, selectedPeriod]);
 
   useEffect(() => () => {
     Object.values(saveTimersRef.current).forEach(clearTimeout);
@@ -199,19 +206,6 @@ export default function App() {
     }
     setSelectedDiretoria('ALL');
     setSelectedArea('ALL');
-
-    // Recupera justificativas da empresa selecionada
-    try {
-      const saved = localStorage.getItem(COMPANIES[cid].storageKey);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-          setJustificationsMap(parsed);
-          showToast(`Ambiente ${COMPANIES[cid].name} carregado com sucesso!`, 'success');
-          return;
-        }
-      }
-    } catch {}
 
     setJustificationsMap({});
     showToast(`Ambiente ${COMPANIES[cid].name} carregado com sucesso!`, 'success');

@@ -717,14 +717,15 @@ const safeObjectSegment = (value: unknown, fallback: string) => {
   return normalized || fallback;
 };
 
-const buildRowStoragePath = (companyId: string, row: Record<string, unknown>) => {
+const buildRowStoragePath = (companyId: string, row: Record<string, unknown>, period: string) => {
   const company = safeObjectSegment(companyId, 'nio');
   const classification = safeObjectSegment(row.n3, 'sem-classificacao');
   const identity = [row.diretoria, row.area, row.n1, row.n2, row.n3, row.responsavel]
     .map((value) => String(value || ''))
     .join('|');
   const rowHash = createHash('sha256').update(identity).digest('hex').slice(0, 16);
-  return `justificativas/${company}/${classification}/${rowHash}.json`;
+  const periodKey = safeObjectSegment(period.replace('/', '-'), 'sem-periodo');
+  return `justificativas/${company}/${classification}/${rowHash}/${periodKey}.json`;
 };
 
 // Salva uma única linha de justificativa. A separação por empresa/classificação/linha
@@ -737,7 +738,7 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
     }
 
     const bucketName = sharedJustificationsBucket();
-    const objectPath = buildRowStoragePath(companyId, row);
+    const objectPath = buildRowStoragePath(companyId, row, period);
     const updatedAt = new Date().toISOString();
     const payload = {
       schemaVersion: 1,
@@ -782,6 +783,7 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
 app.get('/api/gcp/justifications/load-company', async (req: Request, res: Response) => {
   try {
     const companyId = safeObjectSegment(req.query.companyId || 'nio', 'nio');
+    const period = String(req.query.period || '');
     const bucketName = sharedJustificationsBucket();
     const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
     const [files] = await storage.bucket(bucketName).getFiles({ prefix: `justificativas/${companyId}/` });
@@ -796,7 +798,7 @@ app.get('/api/gcp/justifications/load-company', async (req: Request, res: Respon
 
     const justifications: Record<string, unknown> = {};
     for (const entry of entries) {
-      if (entry?.rowId && entry.justifications) {
+      if (entry?.rowId && entry.justifications && (!period || entry.period === period)) {
         justifications[String(entry.rowId)] = entry.justifications;
       }
     }
