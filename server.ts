@@ -369,7 +369,7 @@ app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
     const n1Col = hasN1 ? 'COALESCE(NIO_N1, "Custos & Despesas")' : '"Custos & Despesas"';
     const n2Col = hasN2 ? 'COALESCE(NIO_N2, "Operacional")' : '"Operacional"';
 
-    const query = `
+    const nioQuery = `
       SELECT
         TRIM(COALESCE(DIRETORIA_NIO, 'Diretoria Geral')) AS DIRETORIA_NIO,
         TRIM(COALESCE(AREA_NIO, 'Área Geral')) AS AREA_NIO,
@@ -386,12 +386,43 @@ app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
       ORDER BY DIRETORIA_NIO, AREA_NIO, NIO_N3
     `;
 
-    const [job] = await bigquery.createQueryJob({ query, location: 'southamerica-east1' }).catch(() =>
-      bigquery.createQueryJob({ query })
-    );
-    const [rows] = await job.getQueryResults();
+    const corporateQuery = `
+      SELECT
+        '-' AS DIRETORIA_NIO,
+        TRIM(COALESCE(AREA, '-')) AS AREA_NIO,
+        TRIM(COALESCE(NIVEL_4, '-')) AS RESPONSAVEL_NIO,
+        TRIM(COALESCE(NIVEL_3, '-')) AS NIO_N1,
+        TRIM(COALESCE(NIVEL_2, '-')) AS NIO_N2,
+        TRIM(COALESCE(CLASSIFICACAO_FPA, 'Item DRE')) AS NIO_N3,
+        TRIM(CAST(anomes AS STRING)) AS anomes,
+        TRIM(CAST(TIPO AS STRING)) AS TIPO,
+        ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor,
+        CASE
+          WHEN TRIM(NIVEL_2) = 'Tecto' THEN 'tecto'
+          ELSE 'vtal'
+        END AS COMPANY_ID
+      FROM ${fullTable}
+      WHERE TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom', 'Tecto')
+        AND AREA IS NOT NULL
+        AND CLASSIFICACAO_FPA IS NOT NULL
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 10
+      ORDER BY COMPANY_ID, AREA_NIO, NIO_N3
+    `;
 
-    const cleanRows = (rows || []).map((row: Record<string, unknown>) => {
+    const runQuery = async (query: string) => {
+      const [job] = await bigquery.createQueryJob({ query, location: 'southamerica-east1' }).catch(() =>
+        bigquery.createQueryJob({ query })
+      );
+      const [rows] = await job.getQueryResults();
+      return rows || [];
+    };
+
+    const [nioRows, corporateRows] = await Promise.all([
+      runQuery(nioQuery),
+      runQuery(corporateQuery),
+    ]);
+
+    const cleanResult = (rows: Record<string, unknown>[]) => rows.map((row: Record<string, unknown>) => {
       const clean: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(row)) {
         if (v !== null && typeof v === 'object' && 'value' in v) {
@@ -405,12 +436,22 @@ app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
       return clean;
     });
 
-    console.log(`[Auto-Load] Sincronização automática com sucesso! ${cleanRows.length} linhas agregadas.`);
+    const cleanNioRows = cleanResult(nioRows as Record<string, unknown>[]);
+    const cleanCorporateRows = cleanResult(corporateRows as Record<string, unknown>[]);
+    const vtalRows = cleanCorporateRows.filter((row) => row.COMPANY_ID === 'vtal');
+    const tectoRows = cleanCorporateRows.filter((row) => row.COMPANY_ID === 'tecto');
+
+    console.log(`[Auto-Load] Sincronização concluída: NIO ${cleanNioRows.length}, V.tal ${vtalRows.length}, Tecto ${tectoRows.length}.`);
 
     return res.json({
       success: true,
-      totalRows: cleanRows.length,
-      rows: cleanRows,
+      totalRows: cleanNioRows.length + vtalRows.length + tectoRows.length,
+      rows: cleanNioRows,
+      companyRows: {
+        nio: cleanNioRows,
+        vtal: vtalRows,
+        tecto: tectoRows,
+      },
       projectId,
       datasetId,
       tableId,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { DRERow, RowJustifications } from '../types';
+import { CompanyId, DRERow, RowJustifications } from '../types';
 import { formatCurrencyBRL, formatCurrencyShort } from '../utils/formatters';
 import { ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -10,6 +10,7 @@ interface SelectionCardProps {
   selectedRow: DRERow | null;
   justifications: RowJustifications;
   onAutoReconcileAll?: () => void;
+  currentCompany: CompanyId;
 }
 
 export const SelectionCard: React.FC<SelectionCardProps> = ({
@@ -19,7 +20,9 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
   selectedRow,
   justifications,
   onAutoReconcileAll,
+  currentCompany,
 }) => {
+  const isCorporate = currentCompany === 'vtal' || currentCompany === 'tecto';
   // Cálculo de pendências para o status de fechamento
   let isBalanced = false;
   let hasPending = false;
@@ -59,7 +62,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
       {/* Topo do Card com Título e Contador */}
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-[#14412A]">
-          2. Selecionar Linha de Despesa (N3)
+          2. Selecionar Linha de Despesa ({isCorporate ? 'Classificação FP&A' : 'N3'})
         </h2>
         <span className="text-xs text-[#8C9283] font-medium">
           {rows.length} {rows.length === 1 ? 'linha disponível' : 'linhas disponíveis'}
@@ -94,13 +97,15 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
         {/* Caixa 1: DIRETORIA / ÁREA */}
         <div className="bg-[#FAFBF9] border border-[#CCD8C7] rounded-2xl p-2.5">
           <div className="text-[9px] font-bold text-[#768070] tracking-wider uppercase truncate">
-            DIRETORIA / ÁREA
+            {isCorporate ? 'ÁREA' : 'DIRETORIA / ÁREA'}
           </div>
           <div
             className="text-xs font-bold text-[#14412A] truncate mt-0.5"
             title={selectedRow ? `${selectedRow.diretoria || '-'} > ${selectedRow.area || '-'}` : '-'}
           >
-            {selectedRow
+            {isCorporate
+              ? selectedRow?.area || '-'
+              : selectedRow
               ? selectedRow.diretoria && selectedRow.area
                 ? `${selectedRow.diretoria} / ${selectedRow.area}`
                 : selectedRow.area || selectedRow.diretoria || 'Consolidado'
@@ -111,7 +116,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
         {/* Caixa 2: GRUPO / N1 */}
         <div className="bg-[#FAFBF9] border border-[#CCD8C7] rounded-2xl p-2.5">
           <div className="text-[9px] font-bold text-[#768070] tracking-wider uppercase truncate">
-            GRUPO / N1
+            {isCorporate ? 'NÍVEL 3' : 'GRUPO / N1'}
           </div>
           <div className="text-xs font-bold text-[#14412A] truncate mt-0.5" title={selectedRow ? `${selectedRow.n1} / ${selectedRow.n2}` : '-'}>
             {selectedRow ? `${selectedRow.n1}` : '-'}
@@ -121,7 +126,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
         {/* Caixa 3: RESPONSÁVEL */}
         <div className="bg-[#FAFBF9] border border-[#CCD8C7] rounded-2xl p-2.5">
           <div className="text-[9px] font-bold text-[#768070] tracking-wider uppercase truncate">
-            RESPONSÁVEL (RESPONSAVEL_NIO)
+            {isCorporate ? 'NÍVEL 4' : 'RESPONSÁVEL'}
           </div>
           <div className="text-xs font-bold text-[#14412A] truncate mt-0.5" title={selectedRow?.responsavel || '-'}>
             {selectedRow?.responsavel || '-'}

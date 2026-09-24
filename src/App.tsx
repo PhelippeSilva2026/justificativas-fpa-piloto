@@ -34,7 +34,7 @@ export default function App() {
     const initialCid = (localStorage.getItem('corp_active_company') as CompanyId) || 'nio';
     return getCompanyWorkbook(initialCid);
   });
-  const [gcpWorkbook, setGcpWorkbook] = useState<DREWorkbook | null>(null);
+  const [gcpWorkbooks, setGcpWorkbooks] = useState<Partial<Record<CompanyId, DREWorkbook>>>({});
 
   const [currentFileName, setCurrentFileName] = useState<string>(() => {
     const initialCid = (localStorage.getItem('corp_active_company') as CompanyId) || 'nio';
@@ -105,9 +105,19 @@ export default function App() {
         const data = await resp.json();
         if (isCancelled) return;
 
-        if (data.success && Array.isArray(data.rows) && data.rows.length > 0) {
-          const wb = convertGcpRowsToWorkbook(data.rows, '2026/8');
-          setGcpWorkbook(wb);
+        if (data.success && data.companyRows) {
+          const loaded: Partial<Record<CompanyId, DREWorkbook>> = {};
+          (['nio', 'vtal', 'tecto'] as CompanyId[]).forEach((cid) => {
+            const rows = data.companyRows[cid];
+            if (Array.isArray(rows) && rows.length > 0) {
+              loaded[cid] = convertGcpRowsToWorkbook(rows, '2026/8');
+            }
+          });
+          setGcpWorkbooks(loaded);
+
+          const initialCompany = activeCompany || 'nio';
+          const wb = loaded[initialCompany];
+          if (!wb) return;
           setWorkbook(wb);
           setCurrentFileName('agente_fpa.DRE_FINAL_EXECUTIVA (GCP)');
           if (wb.rows.length > 0) {
@@ -116,7 +126,7 @@ export default function App() {
           if (wb.monthCurrent) {
             setSelectedPeriod(wb.monthCurrent);
           }
-          showToast(`Conectado automaticamente ao BigQuery! ${data.rows.length} linhas carregadas.`, 'success');
+          showToast(`Conectado automaticamente ao BigQuery! ${data.totalRows} linhas carregadas.`, 'success');
         }
       } catch (err) {
         console.warn('Auto-load BigQuery inicial:', err);
@@ -134,24 +144,24 @@ export default function App() {
     };
   }, []);
 
-  // Mantém a NIO ligada ao workbook real mesmo quando o usuário volta ao
-  // portal e seleciona a empresa novamente.
+  // Mantém cada empresa ligada ao respectivo recorte real do BigQuery.
   useEffect(() => {
-    if (activeCompany === 'nio' && gcpWorkbook) {
-      setWorkbook(gcpWorkbook);
+    if (activeCompany && gcpWorkbooks[activeCompany]) {
+      const liveWorkbook = gcpWorkbooks[activeCompany]!;
+      setWorkbook(liveWorkbook);
       setCurrentFileName('agente_fpa.DRE_FINAL_EXECUTIVA (GCP)');
-      if (gcpWorkbook.rows.length > 0) {
-        setSelectedRowId(gcpWorkbook.rows[0].id);
+      if (liveWorkbook.rows.length > 0) {
+        setSelectedRowId(liveWorkbook.rows[0].id);
       }
     }
-  }, [activeCompany, gcpWorkbook]);
+  }, [activeCompany, gcpWorkbooks]);
 
   // Seleção e alternância de empresa (NIO, V.tal, Tecto)
   const handleSelectCompany = (cid: CompanyId) => {
     setActiveCompany(cid);
     localStorage.setItem('corp_active_company', cid);
 
-    const wb = cid === 'nio' && gcpWorkbook ? gcpWorkbook : getCompanyWorkbook(cid);
+    const wb = gcpWorkbooks[cid] || getCompanyWorkbook(cid);
     setWorkbook(wb);
     setCurrentFileName(COMPANIES[cid].excelFileName);
     if (wb.rows.length > 0) {
@@ -674,6 +684,7 @@ export default function App() {
                   selectedRow={selectedRow}
                   justifications={currentJustifications}
                   onAutoReconcileAll={handleAutoReconcileAll}
+                  currentCompany={activeCompany}
                 />
               </div>
             </div>
@@ -706,17 +717,6 @@ export default function App() {
         currentWorkbook={workbook}
       />
 
-      {/* RODAPÉ DO SISTEMA */}
-      <footer className="bg-white border-t border-[#D5DCD2] py-4 px-6 text-center text-xs text-[#5A6454] mt-8">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="font-semibold text-[#14412A]">
-            {company.name} — Plataforma Corporativa de Análise Orçamentária e Gráficos Waterfall
-          </div>
-          <div className="text-[11px] text-[#768070]">
-            Conectado ao BigQuery &amp; Bucket GCP • Exportação PowerPoint (.pptx)
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

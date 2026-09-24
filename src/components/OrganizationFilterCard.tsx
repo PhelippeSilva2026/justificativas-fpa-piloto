@@ -1,5 +1,5 @@
 import React from 'react';
-import { Building2, Layers, RefreshCw } from 'lucide-react';
+import { Building2, Layers } from 'lucide-react';
 
 interface OrganizationFilterCardProps {
   diretorias: string[];
@@ -32,7 +32,7 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
             <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#14412A] text-white text-xs font-bold">
               1
             </span>
-            <h2 className="font-bold text-[#14412A] text-base">Filtro Organizacional (NIO)</h2>
+            <h2 className="font-bold text-[#14412A] text-base">Filtro Organizacional</h2>
           </div>
         </div>
 
@@ -46,7 +46,7 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
             <label className="flex items-center justify-between text-xs font-bold text-[#14412A] mb-1.5">
               <span className="flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5 text-[#14412A]" />
-                Diretoria (DIRETORIA_NIO)
+                Diretoria
               </span>
               <span className="text-[10px] text-[#5A6454] font-normal">
                 {diretorias.length} diretoria(s)
@@ -57,7 +57,7 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
               onChange={(e) => onSelectDiretoria(e.target.value)}
               className="w-full text-xs font-medium px-3.5 py-2.5 rounded-xl border border-[#CCD8C7] bg-[#FAFBF9] text-[#14412A] focus:bg-white focus:border-[#14412A] focus:outline-hidden transition-all cursor-pointer"
             >
-              <option value="ALL">Todas as Diretorias (Consolidado NIO)</option>
+              <option value="ALL">Todas as Diretorias</option>
               {diretorias.map((dir) => (
                 <option key={dir} value={dir}>
                   {dir}
@@ -71,7 +71,7 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
             <label className="flex items-center justify-between text-xs font-bold text-[#14412A] mb-1.5">
               <span className="flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-[#14412A]" />
-                Área (AREA_NIO)
+                Área
               </span>
               <span className="text-[10px] text-[#5A6454] font-normal">
                 {areas.length} área(s)
@@ -93,16 +93,6 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
         </div>
       </div>
 
-      {/* Rodapé do Card */}
-      <div className="mt-4 pt-3 border-t border-[#E8EDE5] flex items-center justify-between text-[11px] text-[#5A6454]">
-        <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-[#39FF00] animate-pulse" />
-          <span className="font-mono text-[10px] text-[#14412A]">agente_fpa.DRE_FINAL_EXECUTIVA</span>
-        </div>
-        <span className="font-medium text-[#14412A]">
-          <strong>{totalFilteredLines}</strong> de {totalLines} linhas
-        </span>
-      </div>
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import React from 'react';
 import { CompanyLogo } from './CompanyLogo';
-import { Download, FileSpreadsheet, Presentation, Layers, Cloud, ArrowLeft, Building2 } from 'lucide-react';
+import { Download, FileSpreadsheet, Presentation, Layers, ArrowLeft } from 'lucide-react';
 import { exportTemplateExcelFile } from '../utils/excelParser';
 import { DREWorkbook, CompanyId } from '../types';
 import { COMPANIES } from '../utils/companyConfigs';
@@ -92,7 +92,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Logo da Empresa Selecionada */}
           <div className="flex items-center gap-3">
-            <div className="flex items-center cursor-pointer" onClick={onGoToPortal} title="Clique para voltar ao Portal">
+            <div className={`flex items-center cursor-pointer ${currentCompany !== 'nio' ? 'bg-[#E5E7E6] rounded-xl p-1.5 shadow-sm' : ''}`} onClick={onGoToPortal} title="Clique para voltar ao Portal">
               <CompanyLogo companyId={currentCompany} size="md" />
             </div>
             <div>
@@ -100,13 +100,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <h1 className="text-base sm:text-lg font-bold text-white tracking-tight leading-none">
                   Análise de Desvios e Justificativas
                 </h1>
-                <span className={`text-[11px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-black/30 border border-white/20 ${accentColorText}`}>
-                  {company.shortName}
-                </span>
               </div>
-              <p className="text-[11px] text-white/70 hidden sm:block mt-0.5">
-                {company.tagline}
-              </p>
             </div>
           </div>
         </div>
@@ -190,17 +184,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <FileSpreadsheet className={`w-3.5 h-3.5 ${accentColorText}`} />
             Excel
-          </button>
-
-          {/* Conectar GCP */}
-          <button
-            type="button"
-            onClick={onOpenGcpModal}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-black/25 hover:bg-black/40 text-xs font-bold text-white border border-white/20 transition-all shadow-xs cursor-pointer"
-            title="Conectar a base à tabela ou bucket do Google Cloud Platform"
-          >
-            <Cloud className={`w-3.5 h-3.5 ${accentColorText}`} />
-            <span>GCP</span>
           </button>
 
           {/* Exportar Slide Atual */}
