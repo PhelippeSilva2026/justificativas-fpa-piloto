@@ -1,5 +1,7 @@
 import React from 'react';
-import { Building2, Layers } from 'lucide-react';
+import { Building2, Layers, ListFilter, CheckCircle2, AlertCircle } from 'lucide-react';
+
+type StatusFilter = 'ALL' | 'COMPLETED' | 'PENDING';
 
 interface OrganizationFilterCardProps {
   diretorias: string[];
@@ -8,6 +10,9 @@ interface OrganizationFilterCardProps {
   areas: string[];
   selectedArea: string;
   onSelectArea: (area: string) => void;
+  selectedStatus: StatusFilter;
+  onSelectStatus: (status: StatusFilter) => void;
+  statusCounts: { total: number; completed: number; pending: number };
   onOpenGcpModal?: () => void;
   totalFilteredLines: number;
   totalLines: number;
@@ -20,6 +25,9 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
   areas,
   selectedArea,
   onSelectArea,
+  selectedStatus,
+  onSelectStatus,
+  statusCounts,
   onOpenGcpModal,
   totalFilteredLines,
   totalLines,
@@ -89,6 +97,41 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
                 </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="flex items-center gap-1.5 text-xs font-bold text-[#14412A] mb-1.5">
+              <ListFilter className="w-3.5 h-3.5 text-[#14412A]" />
+              Status do preenchimento
+            </label>
+            <select
+              value={selectedStatus}
+              onChange={(e) => onSelectStatus(e.target.value as StatusFilter)}
+              className="w-full text-xs font-medium px-3.5 py-2.5 rounded-xl border border-[#CCD8C7] bg-[#FAFBF9] text-[#14412A] focus:bg-white focus:border-[#14412A] focus:outline-hidden transition-all cursor-pointer"
+            >
+              <option value="ALL">Todas</option>
+              <option value="COMPLETED">Concluído</option>
+              <option value="PENDING">Pendente</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <div className="rounded-xl border border-[#CCD8C7] bg-[#FAFBF9] px-2 py-2 text-center">
+              <div className="text-[9px] font-bold uppercase tracking-wide text-[#768070]">Linhas</div>
+              <div className="text-base font-extrabold text-[#14412A]">{statusCounts.total}</div>
+            </div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2 text-center">
+              <div className="flex items-center justify-center gap-1 text-[9px] font-bold uppercase tracking-wide text-emerald-800">
+                <CheckCircle2 className="w-3 h-3" /> Concluídas
+              </div>
+              <div className="text-base font-extrabold text-emerald-800">{statusCounts.completed}</div>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-2 py-2 text-center">
+              <div className="flex items-center justify-center gap-1 text-[9px] font-bold uppercase tracking-wide text-amber-800">
+                <AlertCircle className="w-3 h-3" /> Pendentes
+              </div>
+              <div className="text-base font-extrabold text-amber-800">{statusCounts.pending}</div>
+            </div>
           </div>
         </div>
       </div>

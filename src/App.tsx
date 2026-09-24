@@ -44,6 +44,7 @@ export default function App() {
   const [selectedPeriod, setSelectedPeriod] = useState<string>('2026/8');
   const [selectedDiretoria, setSelectedDiretoria] = useState<string>('ALL');
   const [selectedArea, setSelectedArea] = useState<string>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'COMPLETED' | 'PENDING'>('ALL');
 
   const [selectedRowId, setSelectedRowId] = useState<string>(() => {
     const initialCid = (localStorage.getItem('corp_active_company') as CompanyId) || 'nio';
@@ -206,6 +207,7 @@ export default function App() {
     }
     setSelectedDiretoria('ALL');
     setSelectedArea('ALL');
+    setSelectedStatus('ALL');
 
     setJustificationsMap({});
     showToast(`Ambiente ${COMPANIES[cid].name} carregado com sucesso!`, 'success');
@@ -284,8 +286,22 @@ export default function App() {
     return Array.from(set).sort();
   }, [workbook.rows, workbook.rawRecords, selectedDiretoria]);
 
-  // Filtrar Linhas N3 conforme Diretoria e Área selecionadas
-  const filteredRows = useMemo(() => {
+  const isRowReconciled = (row: DRERow) => {
+    const justifications = justificationsMap[row.id] || {
+      momImpacts: [],
+      vsOrcadoImpacts: [],
+      ytdImpacts: [],
+    };
+    const sum = (items: RowJustifications['momImpacts']) =>
+      items.reduce((total, impact) => total + (Number(impact.value) || 0), 0);
+    const momPending = row.realCurrent - row.realMMinus1 - sum(justifications.momImpacts || []);
+    const monthPending = row.realCurrent - row.orcadoCurrent - sum(justifications.vsOrcadoImpacts || []);
+    const ytdPending = row.realYTD - row.orcadoYTD - sum(justifications.ytdImpacts || []);
+    return Math.abs(momPending) < 1 && Math.abs(monthPending) < 1 && Math.abs(ytdPending) < 1;
+  };
+
+  // Primeiro aplica o recorte organizacional para calcular os KPIs do conjunto visível.
+  const organizationFilteredRows = useMemo(() => {
     return workbook.rows.filter((r) => {
       if (selectedDiretoria !== 'ALL' && r.diretoria !== selectedDiretoria) {
         return false;
@@ -296,6 +312,23 @@ export default function App() {
       return true;
     });
   }, [workbook.rows, selectedDiretoria, selectedArea]);
+
+  const statusCounts = useMemo(() => {
+    const completed = organizationFilteredRows.filter(isRowReconciled).length;
+    return {
+      total: organizationFilteredRows.length,
+      completed,
+      pending: organizationFilteredRows.length - completed,
+    };
+  }, [organizationFilteredRows, justificationsMap]);
+
+  // Em seguida aplica o status escolhido sem alterar os contadores do recorte.
+  const filteredRows = useMemo(() => {
+    if (selectedStatus === 'ALL') return organizationFilteredRows;
+    return organizationFilteredRows.filter((row) =>
+      selectedStatus === 'COMPLETED' ? isRowReconciled(row) : !isRowReconciled(row)
+    );
+  }, [organizationFilteredRows, selectedStatus, justificationsMap]);
 
   // Garantir que a linha selecionada pertença ao subconjunto filtrado
   useEffect(() => {
@@ -309,9 +342,7 @@ export default function App() {
 
   const selectedRow =
     filteredRows.find((r) => r.id === selectedRowId) ||
-    workbook.rows.find((r) => r.id === selectedRowId) ||
     filteredRows[0] ||
-    workbook.rows[0] ||
     null;
 
   const currentJustifications: RowJustifications =
@@ -326,6 +357,7 @@ export default function App() {
     setCurrentFileName(fileName);
     setSelectedDiretoria('ALL');
     setSelectedArea('ALL');
+    setSelectedStatus('ALL');
     if (newWb.monthCurrent) {
       setSelectedPeriod(newWb.monthCurrent);
     }
@@ -750,6 +782,9 @@ export default function App() {
                   areas={uniqueAreas}
                   selectedArea={selectedArea}
                   onSelectArea={setSelectedArea}
+                  selectedStatus={selectedStatus}
+                  onSelectStatus={setSelectedStatus}
+                  statusCounts={statusCounts}
                   onOpenGcpModal={() => setIsGcpModalOpen(true)}
                   totalFilteredLines={filteredRows.length}
                   totalLines={workbook.rows.length}

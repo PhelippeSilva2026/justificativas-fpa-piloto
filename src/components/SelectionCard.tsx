@@ -78,7 +78,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
           className="w-full appearance-none bg-white border border-[#A7AC98]/80 text-[#192B1C] text-xs font-semibold rounded-2xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-[#14412A] focus:border-transparent transition-all shadow-2xs disabled:bg-[#F6F2EE] disabled:text-[#8C9283] cursor-pointer"
         >
           {rows.length === 0 ? (
-            <option value="">Aguardando carregamento da planilha...</option>
+            <option value="">Nenhuma linha para os filtros selecionados</option>
           ) : (
             rows.map((r) => (
               <option key={r.id} value={r.id}>
