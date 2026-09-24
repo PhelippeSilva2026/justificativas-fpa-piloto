@@ -833,14 +833,20 @@ app.get('/api/gcp/justifications/load-company', async (req: Request, res: Respon
     const bucketName = sharedJustificationsBucket();
     const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
     const [files] = await storage.bucket(bucketName).getFiles({ prefix: `justificativas/${companyId}/` });
-    const entries = await Promise.all(files.map(async (file) => {
-      try {
-        const [contents] = await file.download();
-        return JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
-      } catch {
-        return null;
-      }
-    }));
+    const entries: Array<Record<string, unknown> | null> = [];
+    // O cliente do GCS compartilha streams HTTP. Limitar a concorrência evita
+    // MaxListenersExceededWarning quando a empresa possui muitos arquivos.
+    for (let index = 0; index < files.length; index += 5) {
+      const batch = await Promise.all(files.slice(index, index + 5).map(async (file) => {
+        try {
+          const [contents] = await file.download();
+          return JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      }));
+      entries.push(...batch);
+    }
 
     const justifications: Record<string, unknown> = {};
     for (const entry of entries) {
@@ -901,19 +907,21 @@ async function loadReportJustifications(companyId: ReportCompanyId, period: stri
   const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
   const [files] = await storage.bucket(sharedJustificationsBucket()).getFiles({ prefix: `justificativas/${companyId}/` });
   const result: Record<string, Record<string, unknown>> = {};
-  await Promise.all(files.map(async (file) => {
-    try {
-      const [contents] = await file.download();
-      const entry = JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
-      if (!entry.rowId) return;
-      const periods = entry.periods && typeof entry.periods === 'object'
-        ? entry.periods as Record<string, Record<string, unknown>> : {};
-      const selected = periods[period] || ((!entry.period || entry.period === period) ? entry.justifications : undefined);
-      if (selected && typeof selected === 'object') result[String(entry.rowId)] = selected as Record<string, unknown>;
-    } catch (error) {
-      console.warn(`[Word] Justificativa ignorada em ${file.name}:`, error);
-    }
-  }));
+  for (let index = 0; index < files.length; index += 5) {
+    await Promise.all(files.slice(index, index + 5).map(async (file) => {
+      try {
+        const [contents] = await file.download();
+        const entry = JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
+        if (!entry.rowId) return;
+        const periods = entry.periods && typeof entry.periods === 'object'
+          ? entry.periods as Record<string, Record<string, unknown>> : {};
+        const selected = periods[period] || ((!entry.period || entry.period === period) ? entry.justifications : undefined);
+        if (selected && typeof selected === 'object') result[String(entry.rowId)] = selected as Record<string, unknown>;
+      } catch (error) {
+        console.warn(`[Word] Justificativa ignorada em ${file.name}:`, error);
+      }
+    }));
+  }
   return result;
 }
 
