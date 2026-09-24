@@ -8,6 +8,12 @@ import dotenv from 'dotenv';
 import { BigQuery } from '@google-cloud/bigquery';
 import { Storage } from '@google-cloud/storage';
 import { Pool } from 'pg';
+import {
+  generateExecutiveWordReport,
+  type FinancialReportRow,
+  type PhysicalReportRow,
+  type ReportCompanyId,
+} from './server/wordReport';
 
 dotenv.config();
 
@@ -863,6 +869,198 @@ app.get('/api/gcp/justifications/load-company', async (req: Request, res: Respon
       success: false,
       message: error instanceof Error ? error.message : 'Falha ao carregar justificativas.',
     });
+  }
+});
+
+const normalizeReportPeriod = (value: unknown) => {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})[\/-](\d{1,2})$/);
+  if (!match) return null;
+  const month = Number(match[2]);
+  return month >= 1 && month <= 12 ? `${match[1]}/${month}` : null;
+};
+
+const stableReportRowId = (parts: string[]) => {
+  let hash = 2166136261;
+  for (const char of parts.join('|')) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `dre-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+};
+
+const reportValueKind = (value: unknown) => {
+  const clean = String(value || '').toUpperCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '');
+  if (clean.includes('ACTUAL') || clean.includes('REAL') || clean === 'R' || clean.startsWith('ACT')) return 'real';
+  if (clean.includes('BUDGET') || clean.includes('ORCAD') || clean.includes('ORCAMENT') || clean.includes('PLAN') || clean.includes('META') || clean.includes('FORECAST') || clean === 'B' || clean.startsWith('ORC')) return 'budget';
+  return 'other';
+};
+
+async function loadReportJustifications(companyId: ReportCompanyId, period: string) {
+  const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
+  const [files] = await storage.bucket(sharedJustificationsBucket()).getFiles({ prefix: `justificativas/${companyId}/` });
+  const result: Record<string, Record<string, unknown>> = {};
+  await Promise.all(files.map(async (file) => {
+    try {
+      const [contents] = await file.download();
+      const entry = JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
+      if (!entry.rowId) return;
+      const periods = entry.periods && typeof entry.periods === 'object'
+        ? entry.periods as Record<string, Record<string, unknown>> : {};
+      const selected = periods[period] || ((!entry.period || entry.period === period) ? entry.justifications : undefined);
+      if (selected && typeof selected === 'object') result[String(entry.rowId)] = selected as Record<string, unknown>;
+    } catch (error) {
+      console.warn(`[Word] Justificativa ignorada em ${file.name}:`, error);
+    }
+  }));
+  return result;
+}
+
+// Gera a leitura executiva em Word a partir das bases oficiais e das justificativas salvas.
+app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.body?.companyId || '').toLowerCase() as ReportCompanyId;
+    const period = normalizeReportPeriod(req.body?.period);
+    if (!['nio', 'vtal', 'tecto'].includes(companyId) || !period) {
+      return res.status(400).json({ success: false, message: 'Empresa ou mês de referência inválido.' });
+    }
+
+    const [yearText, monthText] = period.split('/');
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    let financialColumns = new Set<string>();
+    if (companyId === 'nio') {
+      try {
+        const [metadata] = await bigquery.dataset('agente_fpa').table('DRE_FINAL_EXECUTIVA').getMetadata();
+        financialColumns = new Set((metadata.schema?.fields || []).map((field: { name: string }) => field.name.toLowerCase()));
+      } catch (error) {
+        console.warn('[Word] Não foi possível inspecionar o schema financeiro:', error);
+      }
+    }
+    const nioResponsibleColumn = financialColumns.has('responsavel_nio') && financialColumns.has('ponto_focal_financeiro_nio')
+      ? "COALESCE(RESPONSAVEL_NIO, PONTO_FOCAL_FINANCEIRO_NIO, 'Não informado')"
+      : financialColumns.has('responsavel_nio')
+        ? "COALESCE(RESPONSAVEL_NIO, 'Não informado')"
+        : financialColumns.has('ponto_focal_financeiro_nio')
+          ? "COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, 'Não informado')"
+          : "'Não informado'";
+    const companyFilter = companyId === 'nio'
+      ? 'DIRETORIA_NIO IS NOT NULL AND AREA_NIO IS NOT NULL AND NIO_N3 IS NOT NULL'
+      : companyId === 'tecto'
+        ? "TRIM(NIVEL_2) = 'Tecto' AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL"
+        : "TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom') AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL";
+    const dimensions = companyId === 'nio'
+      ? `TRIM(COALESCE(DIRETORIA_NIO, 'Diretoria Geral')) AS diretoria,
+         TRIM(COALESCE(AREA_NIO, 'Área Geral')) AS area,
+         TRIM(${nioResponsibleColumn}) AS responsavel,
+         TRIM(COALESCE(NIO_N1, 'Custos & Despesas')) AS n1,
+         TRIM(COALESCE(NIO_N2, 'Operacional')) AS n2,
+         TRIM(COALESCE(NIO_N3, 'Item DRE')) AS n3`
+      : `'-' AS diretoria,
+         TRIM(COALESCE(AREA, '-')) AS area,
+         TRIM(COALESCE(NIVEL_4, '-')) AS responsavel,
+         TRIM(COALESCE(NIVEL_3, '-')) AS n1,
+         TRIM(COALESCE(NIVEL_2, '-')) AS n2,
+         TRIM(COALESCE(CLASSIFICACAO_FPA, 'Item DRE')) AS n3`;
+    const financialQuery = `
+      SELECT ${dimensions}, TRIM(CAST(anomes AS STRING)) AS anomes,
+        TRIM(CAST(TIPO AS STRING)) AS tipo, SUM(SAFE_CAST(valor AS FLOAT64)) AS valor
+      FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA\`
+      WHERE ${companyFilter}
+        AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
+        AND SAFE_CAST(REGEXP_EXTRACT(CAST(anomes AS STRING), r'^(\\d{4})') AS INT64) = @year
+      GROUP BY 1,2,3,4,5,6,7,8`;
+    const physicalOrigins = companyId === 'nio' ? ['FTTH'] : companyId === 'tecto'
+      ? ['Data Centers'] : ['Business Support', 'Mobile Solutions', 'VOIP', 'Wholesale'];
+    const physicalQuery = `
+      SELECT TRIM(CAST(INDICADOR AS STRING)) AS indicador, TRIM(CAST(TIPO AS STRING)) AS tipo,
+        SUM(SAFE_CAST(VALOR AS FLOAT64)) AS valor
+      FROM \`vtal-fpea-prd.agente_fpa.fFisicosBaseUnica\`
+      WHERE (TRIM(CAST(ANOMES AS STRING)) IN (@period, @paddedPeriod, @compactPeriod)
+        OR STARTS_WITH(REGEXP_REPLACE(CAST(ANOMES AS STRING), r'[^0-9]', ''), @compactPeriod))
+        AND TRIM(CAST(ORIGEM AS STRING)) IN UNNEST(@origins)
+        AND INDICADOR IS NOT NULL
+      GROUP BY 1,2 ORDER BY 1,2`;
+
+    const runQuery = async (query: string, params: Record<string, unknown>) => {
+      const options = { query, params, location: 'southamerica-east1' };
+      try {
+        const [rows] = await bigquery.query(options);
+        return rows as Record<string, unknown>[];
+      } catch {
+        const [rows] = await bigquery.query({ query, params });
+        return rows as Record<string, unknown>[];
+      }
+    };
+    const paddedPeriod = `${year}/${String(month).padStart(2, '0')}`;
+    const compactPeriod = `${year}${String(month).padStart(2, '0')}`;
+    const [rawFinancial, rawPhysical, justifications] = await Promise.all([
+      runQuery(financialQuery, { year }),
+      runQuery(physicalQuery, { period, paddedPeriod, compactPeriod, origins: physicalOrigins }),
+      loadReportJustifications(companyId, period),
+    ]);
+
+    type Acc = Omit<FinancialReportRow, 'id' | 'classification' | 'level3' | 'level4'> & {
+      diretoria: string; area: string; responsavel: string; n1: string; n2: string; n3: string;
+    };
+    const financialMap = new Map<string, Acc>();
+    for (const row of rawFinancial) {
+      const dims = ['diretoria', 'area', 'responsavel', 'n1', 'n2', 'n3'].map((key) => String(row[key] ?? '-'));
+      const key = dims.join('|');
+      const acc = financialMap.get(key) || {
+        diretoria: dims[0], area: dims[1], responsavel: dims[2], n1: dims[3], n2: dims[4], n3: dims[5],
+        realCurrent: 0, budgetCurrent: 0, realYtd: 0, budgetYtd: 0,
+      };
+      const periodMatch = normalizeReportPeriod(row.anomes);
+      if (!periodMatch) continue;
+      const [, rowMonthText] = periodMatch.split('/');
+      const rowMonth = Number(rowMonthText);
+      const amount = Number(row.valor) || 0;
+      const kind = reportValueKind(row.tipo);
+      if (kind === 'real') {
+        if (rowMonth === month) acc.realCurrent += amount;
+        if (rowMonth <= month) acc.realYtd += amount;
+      } else if (kind === 'budget') {
+        if (rowMonth === month) acc.budgetCurrent += amount;
+        if (rowMonth <= month) acc.budgetYtd += amount;
+      }
+      financialMap.set(key, acc);
+    }
+    const financialRows: FinancialReportRow[] = Array.from(financialMap.values())
+      .filter((row) => Math.abs(row.realCurrent) >= 0.01 || Math.abs(row.budgetCurrent) >= 0.01)
+      .map((row) => ({
+        id: stableReportRowId([row.diretoria, row.area, row.responsavel, row.n1, row.n2, row.n3]),
+        classification: row.n3, area: row.area, level3: row.n1, level4: row.responsavel,
+        realCurrent: row.realCurrent, budgetCurrent: row.budgetCurrent,
+        realYtd: row.realYtd, budgetYtd: row.budgetYtd,
+      }));
+
+    const physicalMap = new Map<string, PhysicalReportRow>();
+    for (const row of rawPhysical) {
+      const indicator = String(row.indicador || 'Indicador');
+      const current = physicalMap.get(indicator) || { indicator, real: 0, budget: 0 };
+      const kind = reportValueKind(row.tipo);
+      if (kind === 'real') current.real += Number(row.valor) || 0;
+      if (kind === 'budget') current.budget += Number(row.valor) || 0;
+      physicalMap.set(indicator, current);
+    }
+    const physicalRows = Array.from(physicalMap.values())
+      .filter((row) => Math.abs(row.real) >= 0.0001 || Math.abs(row.budget) >= 0.0001);
+    const logoPath = path.resolve(process.cwd(), 'public', 'Logos', `${companyId}.png`);
+    const document = await generateExecutiveWordReport({
+      companyId, period, financialRows, physicalRows,
+      justifications: justifications as never,
+      logo: fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : Buffer.alloc(0),
+    });
+    const filename = `${companyId.toUpperCase()}_Fechamento_${year}_${String(month).padStart(2, '0')}_Leitura.docx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(document);
+  } catch (error: unknown) {
+    console.error('[Word] Falha ao gerar leitura executiva:', error);
+    return res.status(500).json({ success: false, message: error instanceof Error ? error.message : 'Falha ao gerar o Word.' });
   }
 });
 

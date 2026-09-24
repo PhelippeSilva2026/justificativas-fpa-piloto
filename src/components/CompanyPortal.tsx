@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { Download, FileText, Loader2, X } from 'lucide-react';
 import { CompanyId } from '../types';
 import { COMPANIES } from '../utils/companyConfigs';
 import { CompanyLogo } from './CompanyLogo';
@@ -12,6 +13,61 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
   onSelectCompany,
   savedCounts
 }) => {
+  const [reportCompany, setReportCompany] = useState<CompanyId | null>(null);
+  const [reportMonth, setReportMonth] = useState('2026-09');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [reportError, setReportError] = useState('');
+
+  const openReport = (event: React.MouseEvent, companyId: CompanyId) => {
+    event.stopPropagation();
+    setReportCompany(companyId);
+    setReportError('');
+  };
+
+  const generateReport = async () => {
+    if (!reportCompany || !reportMonth) return;
+    setIsGenerating(true);
+    setReportError('');
+    try {
+      const [year, month] = reportMonth.split('-');
+      const period = `${year}/${Number(month)}`;
+      const response = await fetch('/api/reports/executive-word', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: reportCompany, period }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Não foi possível gerar o documento.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${reportCompany.toUpperCase()}_Fechamento_${year}_${month}_Leitura.docx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setReportCompany(null);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : 'Não foi possível gerar o documento.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const reportButton = (companyId: CompanyId) => (
+    <button
+      type="button"
+      onClick={(event) => openReport(event, companyId)}
+      className="mt-3 w-full border border-[#B9C2BC] bg-white hover:bg-[#F2F6F3] text-[#24352C] font-bold text-xs px-4 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2"
+    >
+      <FileText size={15} />
+      Gerar leitura executiva
+    </button>
+  );
+
   return (
     <div className="min-h-screen bg-[#F3F3F3] text-[#252525] flex flex-col font-sans selection:bg-[#4F927F]/25 selection:text-[#202020]">
       {/* Top Bar Corporativa */}
@@ -95,6 +151,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
                 <span className="group-hover:translate-x-1 transition-transform">→</span>
               </button>
             </div>
+            {reportButton('nio')}
           </div>
 
           {/* CARD 2: V.TAL */}
@@ -139,6 +196,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
                 <span className="group-hover:translate-x-1 transition-transform">→</span>
               </button>
             </div>
+            {reportButton('vtal')}
           </div>
 
           {/* CARD 3: TECTO */}
@@ -183,10 +241,84 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
                 <span className="group-hover:translate-x-1 transition-transform">→</span>
               </button>
             </div>
+            {reportButton('tecto')}
           </div>
         </div>
 
       </main>
+
+      {reportCompany && (
+        <div
+          className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => !isGenerating && setReportCompany(null)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-[#D7DCD8] p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-[#E5E7E6] p-1 overflow-hidden shadow-sm">
+                  <CompanyLogo companyId={reportCompany} size="md" className="w-full h-full" />
+                </div>
+                <div>
+                  <h3 className="font-black text-lg text-[#252525]">Gerar leitura executiva</h3>
+                  <p className="text-xs text-[#68716C]">{COMPANIES[reportCompany].name} · Documento Word</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Fechar"
+                disabled={isGenerating}
+                onClick={() => setReportCompany(null)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 disabled:opacity-40"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-6">
+              <label htmlFor="report-month" className="block text-sm font-bold text-[#24352C] mb-2">
+                Mês de referência
+              </label>
+              <input
+                id="report-month"
+                type="month"
+                value={reportMonth}
+                onChange={(event) => setReportMonth(event.target.value)}
+                disabled={isGenerating}
+                className="w-full rounded-xl border border-[#B9C2BC] px-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#4F927F]/40 focus:border-[#4F927F]"
+              />
+              <p className="mt-2 text-xs leading-relaxed text-[#68716C]">
+                O arquivo usará os dados financeiros, os indicadores físicos e as justificativas já salvas para essa competência.
+              </p>
+              {reportError && (
+                <p className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{reportError}</p>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={isGenerating}
+                onClick={() => setReportCompany(null)}
+                className="px-4 py-2.5 rounded-xl text-sm font-bold text-[#4E5852] hover:bg-gray-100 disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isGenerating || !reportMonth}
+                onClick={generateReport}
+                className="px-5 py-2.5 rounded-xl bg-[#242424] text-white text-sm font-bold hover:bg-[#315F52] disabled:opacity-50 flex items-center gap-2"
+              >
+                {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                {isGenerating ? 'Gerando...' : 'Gerar Word'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
