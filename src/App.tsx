@@ -258,23 +258,29 @@ export default function App() {
     }
   };
 
-  // Extrair listas únicas de Diretorias e Áreas para os seletores
+  // Linhas sem movimento no mês não representam desvios e ficam fora de toda a análise.
+  const relevantRows = useMemo(
+    () => workbook.rows.filter((row) =>
+      Math.abs(row.realCurrent) >= 0.01 || Math.abs(row.orcadoCurrent) >= 0.01
+    ),
+    [workbook.rows]
+  );
+
+  // Extrair listas únicas de Diretorias e Áreas somente das linhas relevantes.
   const uniqueDiretorias = useMemo(() => {
     const set = new Set<string>();
-    const sourceRows = workbook.rawRecords && workbook.rawRecords.length > 0 ? workbook.rawRecords : workbook.rows;
-    sourceRows.forEach((r) => {
+    relevantRows.forEach((r) => {
       const d = (r.diretoria || '').trim();
       if (d && d !== '-' && d !== '0' && d !== 'Sem Diretoria' && d !== 'Diretoria Geral') {
         set.add(d);
       }
     });
     return Array.from(set).sort();
-  }, [workbook.rows, workbook.rawRecords]);
+  }, [relevantRows]);
 
   const uniqueAreas = useMemo(() => {
     const set = new Set<string>();
-    const sourceRows = workbook.rawRecords && workbook.rawRecords.length > 0 ? workbook.rawRecords : workbook.rows;
-    sourceRows.forEach((r) => {
+    relevantRows.forEach((r) => {
       const d = (r.diretoria || '').trim();
       const a = (r.area || '').trim();
       if (selectedDiretoria === 'ALL' || d === selectedDiretoria) {
@@ -284,7 +290,7 @@ export default function App() {
       }
     });
     return Array.from(set).sort();
-  }, [workbook.rows, workbook.rawRecords, selectedDiretoria]);
+  }, [relevantRows, selectedDiretoria]);
 
   const isRowReconciled = (row: DRERow) => {
     const justifications = justificationsMap[row.id] || {
@@ -302,7 +308,7 @@ export default function App() {
 
   // Primeiro aplica o recorte organizacional para calcular os KPIs do conjunto visível.
   const organizationFilteredRows = useMemo(() => {
-    return workbook.rows.filter((r) => {
+    return relevantRows.filter((r) => {
       if (selectedDiretoria !== 'ALL' && r.diretoria !== selectedDiretoria) {
         return false;
       }
@@ -311,7 +317,7 @@ export default function App() {
       }
       return true;
     });
-  }, [workbook.rows, selectedDiretoria, selectedArea]);
+  }, [relevantRows, selectedDiretoria, selectedArea]);
 
   const statusCounts = useMemo(() => {
     const completed = organizationFilteredRows.filter(isRowReconciled).length;
