@@ -717,59 +717,92 @@ const safeObjectSegment = (value: unknown, fallback: string) => {
   return normalized || fallback;
 };
 
-const buildRowStoragePath = (companyId: string, row: Record<string, unknown>, period: string) => {
+const buildRowStoragePath = (companyId: string, row: Record<string, unknown>) => {
   const company = safeObjectSegment(companyId, 'nio');
   const classification = safeObjectSegment(row.n3, 'sem-classificacao');
   const identity = [row.diretoria, row.area, row.n1, row.n2, row.n3, row.responsavel]
     .map((value) => String(value || ''))
     .join('|');
   const rowHash = createHash('sha256').update(identity).digest('hex').slice(0, 16);
-  const periodKey = safeObjectSegment(period.replace('/', '-'), 'sem-periodo');
-  return `justificativas/${company}/${classification}/${rowHash}/${periodKey}.json`;
+  return `justificativas/${company}/${classification}/${rowHash}.json`;
 };
 
-// Salva uma única linha de justificativa. A separação por empresa/classificação/linha
-// evita que usuários trabalhando em pontos diferentes sobrescrevam o mesmo arquivo.
+// Salva uma linha em um único JSON acumulado. Cada mês ocupa uma chave em `periods`.
+// A condição de geração impede que duas gravações concorrentes apaguem alterações.
 app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response) => {
   try {
     const { companyId = 'nio', period = '', row, justifications, user = 'Usuário da aplicação' } = req.body;
-    if (!row || !row.id || !justifications) {
-      return res.status(400).json({ success: false, message: 'Linha e justificativas são obrigatórias.' });
+    if (!row || !row.id || !justifications || !period) {
+      return res.status(400).json({ success: false, message: 'Linha, mês e justificativas são obrigatórios.' });
     }
 
     const bucketName = sharedJustificationsBucket();
-    const objectPath = buildRowStoragePath(companyId, row, period);
+    const objectPath = buildRowStoragePath(companyId, row);
     const updatedAt = new Date().toISOString();
-    const payload = {
-      schemaVersion: 1,
-      companyId,
-      period,
-      rowId: row.id,
-      classification: row.n3,
-      row: {
-        diretoria: row.diretoria || '-',
-        area: row.area || '-',
-        nivel2: row.n2 || '-',
-        nivel3: row.n1 || '-',
-        nivel4: row.responsavel || '-',
-        n3: row.n3 || '-',
-      },
-      justifications,
-      updatedAt,
-      updatedBy: user,
-    };
-
     const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
-    await storage.bucket(bucketName).file(objectPath).save(JSON.stringify(payload, null, 2), {
-      contentType: 'application/json',
-      resumable: false,
-      metadata: {
-        cacheControl: 'no-store',
-        metadata: { companyId, rowId: String(row.id), updatedAt },
-      },
-    });
+    const file = storage.bucket(bucketName).file(objectPath);
 
-    return res.json({ success: true, bucket: bucketName, objectPath, updatedAt });
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      try {
+        const [exists] = await file.exists();
+        let current: Record<string, unknown> = {};
+        let generation = 0;
+        if (exists) {
+          const [[contents], [metadata]] = await Promise.all([file.download(), file.getMetadata()]);
+          current = JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
+          generation = Number(metadata.generation || 0);
+        }
+
+        const currentPeriods = (current.periods && typeof current.periods === 'object')
+          ? current.periods as Record<string, unknown>
+          : {};
+        // Compatibilidade com algum arquivo criado no formato anterior.
+        if (current.period && current.justifications && !currentPeriods[String(current.period)]) {
+          currentPeriods[String(current.period)] = current.justifications;
+        }
+        const periodMetadata = (current.periodMetadata && typeof current.periodMetadata === 'object')
+          ? current.periodMetadata as Record<string, unknown>
+          : {};
+        currentPeriods[period] = justifications;
+        periodMetadata[period] = { updatedAt, updatedBy: user };
+
+        const payload = {
+          schemaVersion: 2,
+          companyId,
+          rowId: row.id,
+          classification: row.n3,
+          row: {
+            diretoria: row.diretoria || '-',
+            area: row.area || '-',
+            nivel2: row.n2 || '-',
+            nivel3: row.n1 || '-',
+            nivel4: row.responsavel || '-',
+            n3: row.n3 || '-',
+          },
+          periods: currentPeriods,
+          periodMetadata,
+          updatedAt,
+          updatedBy: user,
+        };
+
+        await file.save(JSON.stringify(payload, null, 2), {
+          contentType: 'application/json',
+          resumable: false,
+          preconditionOpts: { ifGenerationMatch: generation },
+          metadata: {
+            cacheControl: 'no-store',
+            metadata: { companyId, rowId: String(row.id), updatedAt },
+          },
+        });
+        return res.json({ success: true, bucket: bucketName, objectPath, period, updatedAt });
+      } catch (error: unknown) {
+        const code = (error as { code?: number | string }).code;
+        if ((code === 412 || code === '412') && attempt < 5) continue;
+        throw error;
+      }
+    }
+
+    throw new Error('Não foi possível concluir a gravação concorrente após 5 tentativas.');
   } catch (error: unknown) {
     console.error('[Justificativas] Falha ao salvar linha no Bucket:', error);
     return res.status(500).json({
@@ -798,7 +831,14 @@ app.get('/api/gcp/justifications/load-company', async (req: Request, res: Respon
 
     const justifications: Record<string, unknown> = {};
     for (const entry of entries) {
-      if (entry?.rowId && entry.justifications && (!period || entry.period === period)) {
+      if (!entry?.rowId) continue;
+      const periods = entry.periods && typeof entry.periods === 'object'
+        ? entry.periods as Record<string, unknown>
+        : {};
+      const selected = period ? periods[period] : undefined;
+      if (selected) {
+        justifications[String(entry.rowId)] = selected;
+      } else if (entry.justifications && (!period || entry.period === period)) {
         justifications[String(entry.rowId)] = entry.justifications;
       }
     }
