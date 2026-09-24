@@ -31,7 +31,7 @@ export const COMPANIES: Record<CompanyId, CompanyInfo> = {
     headerBorder: 'border-black',
     cardBorder: 'border-[#4F927F]/40',
     accentText: 'text-[#4F927F]',
-    storageKey: 'vtal_justifications_v1',
+    storageKey: 'vtal_justifications_live_v2',
     excelFileName: 'Planilha_DRE_Vtal_RedeNeutra.xlsx',
     defaultResponsible: 'Diretoria de Engenharia & Infraestrutura',
     sectors: ['Cabos Submarinos', 'Transporte DWDM', 'Dark Fiber', 'Estações CLS', 'Direito de Passagem']
@@ -48,7 +48,7 @@ export const COMPANIES: Record<CompanyId, CompanyInfo> = {
     headerBorder: 'border-black',
     cardBorder: 'border-[#4F927F]/40',
     accentText: 'text-[#4F927F]',
-    storageKey: 'tecto_justifications_v1',
+    storageKey: 'tecto_justifications_live_v2',
     excelFileName: 'Planilha_DRE_Tecto_DataCenters.xlsx',
     defaultResponsible: 'Diretoria de Operações de Data Centers',
     sectors: ['Energia & PUE', 'Climatização Chillers', 'Geradores & UPS', 'Cross-Connects', 'Certificações Tier III']

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { DRERow, DREWorkbook, RowJustifications, CompanyId } from './types';
 import { exportToPowerPoint } from './utils/pptxExport';
 import { calculateDREFromRaw, convertGcpRowsToWorkbook } from './utils/gcpConnector';
@@ -64,7 +64,7 @@ export default function App() {
     } catch {
       // Fallback
     }
-    return initialCid === 'nio' ? {} : getCompanySampleJustifications(initialCid);
+    return {};
   });
 
   // Salva automaticamente qualquer alteração de justificativas no armazenamento da empresa ativa
@@ -84,6 +84,8 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(
     null
   );
+  const [cloudSaveStatus, setCloudSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
@@ -91,6 +93,34 @@ export default function App() {
       setToastMessage(null);
     }, 4500);
   };
+
+  // Ao entrar em uma empresa, carrega as justificativas compartilhadas do Bucket.
+  useEffect(() => {
+    if (!activeCompany) return;
+    const controller = new AbortController();
+
+    fetch(`/api/gcp/justifications/load-company?companyId=${activeCompany}`, { signal: controller.signal })
+      .then(async (resp) => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return resp.json();
+      })
+      .then((data) => {
+        if (data.success && data.justifications) {
+          setJustificationsMap((local) => ({ ...local, ...data.justifications }));
+        }
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name !== 'AbortError') {
+          console.warn('Não foi possível carregar justificativas compartilhadas:', error);
+        }
+      });
+
+    return () => controller.abort();
+  }, [activeCompany]);
+
+  useEffect(() => () => {
+    Object.values(saveTimersRef.current).forEach(clearTimeout);
+  }, []);
 
   // Carregamento automático e 100% conectado com o BigQuery no boot do aplicativo
   useEffect(() => {
@@ -183,7 +213,7 @@ export default function App() {
       }
     } catch {}
 
-    setJustificationsMap(cid === 'nio' ? {} : getCompanySampleJustifications(cid));
+    setJustificationsMap({});
     showToast(`Ambiente ${COMPANIES[cid].name} carregado com sucesso!`, 'success');
   };
 
@@ -320,6 +350,39 @@ export default function App() {
       ...prev,
       [selectedRow.id]: updated,
     }));
+
+    const companyId = activeCompany;
+    if (!companyId) return;
+    const rowToSave = selectedRow;
+    const timerKey = `${companyId}:${rowToSave.id}`;
+    if (saveTimersRef.current[timerKey]) {
+      clearTimeout(saveTimersRef.current[timerKey]);
+    }
+    setCloudSaveStatus('saving');
+    saveTimersRef.current[timerKey] = setTimeout(async () => {
+      try {
+        const response = await fetch('/api/gcp/justifications/save-row', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companyId,
+            period: selectedPeriod,
+            row: rowToSave,
+            justifications: updated,
+          }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        if (!result.success) throw new Error(result.message || 'Falha ao salvar');
+        setCloudSaveStatus('saved');
+        setTimeout(() => setCloudSaveStatus('idle'), 2500);
+      } catch (error) {
+        console.error('Erro ao salvar justificativa no Bucket:', error);
+        setCloudSaveStatus('error');
+      } finally {
+        delete saveTimersRef.current[timerKey];
+      }
+    }, 900);
   };
 
   // Funções de manipulação de impactos
@@ -588,6 +651,29 @@ export default function App() {
             )}
             <span>{toastMessage.text}</span>
           </div>
+        </div>
+      )}
+
+      {cloudSaveStatus !== 'idle' && (
+        <div className={`fixed bottom-6 left-6 z-50 px-3.5 py-2 rounded-xl shadow-lg border flex items-center gap-2 text-xs font-semibold ${
+          cloudSaveStatus === 'error'
+            ? 'bg-red-50 text-red-800 border-red-300'
+            : 'bg-white text-[#14412A] border-[#CCD8C7]'
+        }`}>
+          {cloudSaveStatus === 'saving' ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : cloudSaveStatus === 'saved' ? (
+            <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+          ) : (
+            <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+          )}
+          <span>
+            {cloudSaveStatus === 'saving'
+              ? 'Salvando no GCP...'
+              : cloudSaveStatus === 'saved'
+              ? 'Justificativa salva no GCP'
+              : 'Falha ao salvar no GCP'}
+          </span>
         </div>
       )}
 

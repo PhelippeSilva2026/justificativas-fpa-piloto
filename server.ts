@@ -3,6 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { createHash } from 'crypto';
 import dotenv from 'dotenv';
 import { BigQuery } from '@google-cloud/bigquery';
 import { Storage } from '@google-cloud/storage';
@@ -700,6 +701,120 @@ app.get('/api/gcp/bucket/load', async (req: Request, res: Response) => {
     justifications: {},
     message: 'Nenhuma justificativa prévia encontrada no bucket para esta empresa.',
   });
+});
+
+const sharedJustificationsBucket = () =>
+  process.env.GCP_BUCKET_NAME || 'vtal-bucket-financeiro-prd';
+
+const safeObjectSegment = (value: unknown, fallback: string) => {
+  const normalized = String(value || fallback)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 90);
+  return normalized || fallback;
+};
+
+const buildRowStoragePath = (companyId: string, row: Record<string, unknown>) => {
+  const company = safeObjectSegment(companyId, 'nio');
+  const classification = safeObjectSegment(row.n3, 'sem-classificacao');
+  const identity = [row.diretoria, row.area, row.n1, row.n2, row.n3, row.responsavel]
+    .map((value) => String(value || ''))
+    .join('|');
+  const rowHash = createHash('sha256').update(identity).digest('hex').slice(0, 16);
+  return `justificativas/${company}/${classification}/${rowHash}.json`;
+};
+
+// Salva uma única linha de justificativa. A separação por empresa/classificação/linha
+// evita que usuários trabalhando em pontos diferentes sobrescrevam o mesmo arquivo.
+app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response) => {
+  try {
+    const { companyId = 'nio', period = '', row, justifications, user = 'Usuário da aplicação' } = req.body;
+    if (!row || !row.id || !justifications) {
+      return res.status(400).json({ success: false, message: 'Linha e justificativas são obrigatórias.' });
+    }
+
+    const bucketName = sharedJustificationsBucket();
+    const objectPath = buildRowStoragePath(companyId, row);
+    const updatedAt = new Date().toISOString();
+    const payload = {
+      schemaVersion: 1,
+      companyId,
+      period,
+      rowId: row.id,
+      classification: row.n3,
+      row: {
+        diretoria: row.diretoria || '-',
+        area: row.area || '-',
+        nivel2: row.n2 || '-',
+        nivel3: row.n1 || '-',
+        nivel4: row.responsavel || '-',
+        n3: row.n3 || '-',
+      },
+      justifications,
+      updatedAt,
+      updatedBy: user,
+    };
+
+    const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
+    await storage.bucket(bucketName).file(objectPath).save(JSON.stringify(payload, null, 2), {
+      contentType: 'application/json',
+      resumable: false,
+      metadata: {
+        cacheControl: 'no-store',
+        metadata: { companyId, rowId: String(row.id), updatedAt },
+      },
+    });
+
+    return res.json({ success: true, bucket: bucketName, objectPath, updatedAt });
+  } catch (error: unknown) {
+    console.error('[Justificativas] Falha ao salvar linha no Bucket:', error);
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Falha ao salvar no Bucket.',
+    });
+  }
+});
+
+// Carrega todas as linhas persistidas de uma empresa e devolve o mesmo mapa usado pela tela.
+app.get('/api/gcp/justifications/load-company', async (req: Request, res: Response) => {
+  try {
+    const companyId = safeObjectSegment(req.query.companyId || 'nio', 'nio');
+    const bucketName = sharedJustificationsBucket();
+    const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
+    const [files] = await storage.bucket(bucketName).getFiles({ prefix: `justificativas/${companyId}/` });
+    const entries = await Promise.all(files.map(async (file) => {
+      try {
+        const [contents] = await file.download();
+        return JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    }));
+
+    const justifications: Record<string, unknown> = {};
+    for (const entry of entries) {
+      if (entry?.rowId && entry.justifications) {
+        justifications[String(entry.rowId)] = entry.justifications;
+      }
+    }
+
+    return res.json({
+      success: true,
+      source: 'gcp_bucket',
+      bucket: bucketName,
+      totalRows: Object.keys(justifications).length,
+      justifications,
+    });
+  } catch (error: unknown) {
+    console.error('[Justificativas] Falha ao carregar empresa do Bucket:', error);
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Falha ao carregar justificativas.',
+    });
+  }
 });
 
 // Iniciar servidor em desenvolvimento com Vite middlewares ou produção

@@ -2,7 +2,7 @@ services:
   - type: web
     name: justificativas-fpa-piloto
     runtime: docker
-    plan: free
+    plan: 0.5c-512mb
     dockerfilePath: ./Dockerfile
     healthCheckPath: /
     envVars:
@@ -10,5 +10,7 @@ services:
         value: production
       - key: GCP_PROJECT_ID
         value: vtal-fpea-prd
+      - key: GCP_BUCKET_NAME
+        value: vtal-bucket-financeiro-prd
       - key: GCP_SERVICE_ACCOUNT_KEY
         sync: false

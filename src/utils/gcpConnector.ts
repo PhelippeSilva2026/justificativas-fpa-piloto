@@ -222,7 +222,16 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
     }
   }
 
-  const rows: DRERow[] = Array.from(groups.values()).map((g, idx) => {
+  const stableRowId = (parts: string[]) => {
+    let hash = 2166136261;
+    for (const char of parts.join('|')) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `dre-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+  };
+
+  const rows: DRERow[] = Array.from(groups.values()).map((g) => {
     const diffOrcadoAbs = g.realCurrent - g.orcadoCurrent;
     const diffOrcadoPct = g.orcadoCurrent !== 0 ? (diffOrcadoAbs / Math.abs(g.orcadoCurrent)) * 100 : 0;
 
@@ -233,7 +242,7 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
     const diffOrcadoYTDPct = g.orcadoYTD !== 0 ? (diffOrcadoYTDAbs / Math.abs(g.orcadoYTD)) * 100 : 0;
 
     return {
-      id: `dre-row-${idx + 1}`,
+      id: stableRowId([g.diretoria, g.area, g.responsavel, g.n1, g.n2, g.n3]),
       diretoria: g.diretoria,
       area: g.area,
       responsavel: g.responsavel,
