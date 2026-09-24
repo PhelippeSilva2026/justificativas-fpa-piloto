@@ -247,7 +247,10 @@ app.post('/api/gcp/bigquery/query', async (req: Request, res: Response) => {
             TRIM(CAST(TIPO AS STRING)) AS TIPO,
             ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor
           FROM ${fullTable}
-          WHERE DIRETORIA_NIO IS NOT NULL AND AREA_NIO IS NOT NULL AND NIO_N3 IS NOT NULL
+          WHERE DIRETORIA_NIO IS NOT NULL
+            AND AREA_NIO IS NOT NULL
+            AND NIO_N3 IS NOT NULL
+            AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
           GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
           ORDER BY DIRETORIA_NIO, AREA_NIO, NIO_N3
         `;
@@ -382,7 +385,10 @@ app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
         TRIM(CAST(TIPO AS STRING)) AS TIPO,
         ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor
       FROM ${fullTable}
-      WHERE DIRETORIA_NIO IS NOT NULL AND AREA_NIO IS NOT NULL AND NIO_N3 IS NOT NULL
+      WHERE DIRETORIA_NIO IS NOT NULL
+        AND AREA_NIO IS NOT NULL
+        AND NIO_N3 IS NOT NULL
+        AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
       GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
       ORDER BY DIRETORIA_NIO, AREA_NIO, NIO_N3
     `;
@@ -406,6 +412,7 @@ app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
       WHERE TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom', 'Tecto')
         AND AREA IS NOT NULL
         AND CLASSIFICACAO_FPA IS NOT NULL
+        AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
       GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 10
       ORDER BY COMPANY_ID, AREA_NIO, NIO_N3
     `;
