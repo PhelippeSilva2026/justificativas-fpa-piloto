@@ -38,6 +38,17 @@ try {
   console.warn('Erro ao ler /server/service-account.json:', e);
 }
 
+// Em produção a chave é fornecida pelo cofre de variáveis do Render, sem ser
+// gravada no repositório ou na imagem Docker.
+if (!defaultCredentials && process.env.GCP_SERVICE_ACCOUNT_KEY) {
+  try {
+    defaultCredentials = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY);
+    console.log('[Server] Service Account padrão carregada da variável segura GCP_SERVICE_ACCOUNT_KEY:', (defaultCredentials as { client_email?: string })?.client_email);
+  } catch (e) {
+    console.warn('Erro ao interpretar GCP_SERVICE_ACCOUNT_KEY:', e);
+  }
+}
+
 // Helper para instanciar cliente BigQuery com credenciais dinâmicas ou de ambiente
 function getBigQueryClient(options: { projectId?: string; credentials?: unknown; credentialsJson?: unknown }) {
   let credentialsObj = options.credentials || options.credentialsJson;
@@ -1090,21 +1101,34 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
     let agentReply: string | null = null;
     let citations: Array<{ title: string; url?: string; snippet?: string }> = [];
 
-    const keyFile = path.join(process.cwd(), 'server', 'service-account.json');
-
     // 1. TENTATIVA 1: Agente Executivo de FP&A no Cloud Run (fpa-a2a-agent / A2A Protocol)
     // Conecta automaticamente ao mesmo serviço chamado por '@ Agente Executivo de FP&A V.tal' no Gemini
-    if (fs.existsSync(keyFile)) {
+    if (defaultCredentials) {
       try {
-        const auth = new GoogleAuth({ keyFilename: keyFile });
+        const auth = new GoogleAuth({ credentials: defaultCredentials as never });
         const a2aUrl = 'https://fpa-a2a-agent-7kylviopuq-uc.a.run.app';
         const idClient = await auth.getIdTokenClient(a2aUrl);
         const headers = await idClient.getRequestHeaders();
 
+        const messageId = `portal-${Date.now()}`;
+
         const a2aRes = await fetch(a2aUrl, {
           method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: trimmedMsg, input: trimmedMsg })
+          headers: { ...headers, 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: messageId,
+            method: 'message/stream',
+            params: {
+              configuration: { blocking: true, acceptedOutputModes: [] },
+              message: {
+                kind: 'message',
+                messageId,
+                role: 'user',
+                parts: [{ kind: 'text', text: trimmedMsg }],
+              },
+            },
+          })
         });
 
         if (a2aRes.ok) {
@@ -1119,10 +1143,11 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
             if (line.startsWith('data: ')) {
               try {
                 const json = JSON.parse(line.slice(6));
-                if (json.artifact?.parts) {
-                  for (const part of json.artifact.parts) {
+                const event = json.result || json;
+                if (event.artifact?.parts) {
+                  for (const part of event.artifact.parts) {
                     if (part.text) {
-                      if (json.artifact.name === 'Final response') {
+                      if (event.artifact.name === 'Final response') {
                         finalResponseText += (finalResponseText ? '\n\n' : '') + part.text;
                       } else {
                         dataResultText += (dataResultText ? '\n\n' : '') + part.text;
@@ -1145,10 +1170,10 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
     }
 
     // 2. TENTATIVA 2: Vertex AI Search nos motores corporativos da V.tal
-    if (!agentReply && fs.existsSync(keyFile)) {
+    if (!agentReply && defaultCredentials) {
       try {
         const auth = new GoogleAuth({
-          keyFilename: keyFile,
+          credentials: defaultCredentials as never,
           scopes: ['https://www.googleapis.com/auth/cloud-platform']
         });
         const client = await auth.getClient();
@@ -1229,9 +1254,9 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
 
     // 3. TENTATIVA 3 (SOLUÇÃO IMEDIATA): Consulta em Tempo Real ao BigQuery Oficial
     // A conta de serviço já é Administradora do BigQuery no projeto vtal-fpea-prd!
-    if (!agentReply && fs.existsSync(keyFile)) {
+    if (!agentReply && defaultCredentials) {
       try {
-        const bq = new BigQuery({ keyFilename: keyFile, projectId: 'vtal-fpea-prd' });
+        const bq = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
         const lower = trimmedMsg.toLowerCase();
 
         // Identifica empresa solicitada
