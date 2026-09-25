@@ -1109,12 +1109,15 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
         const a2aUrl = 'https://fpa-a2a-agent-7kylviopuq-uc.a.run.app';
         const idClient = await auth.getIdTokenClient(a2aUrl);
         const headers = await idClient.getRequestHeaders();
+        const authHeaders = typeof (headers as Headers).entries === 'function'
+          ? Object.fromEntries((headers as Headers).entries())
+          : { ...(headers as unknown as Record<string, string>) };
 
         const messageId = `portal-${Date.now()}`;
 
         const a2aRes = await fetch(a2aUrl, {
           method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+          headers: { ...authHeaders, 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: messageId,
@@ -1163,6 +1166,8 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
           if (chosen) {
             agentReply = chosen;
           }
+        } else {
+          console.warn('[Cloud Run fpa-a2a-agent] Resposta HTTP não autorizada:', a2aRes.status, await a2aRes.text());
         }
       } catch (a2aErr) {
         console.warn('[Cloud Run fpa-a2a-agent] Falha ao consultar agente A2A:', a2aErr);
