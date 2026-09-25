@@ -719,6 +719,166 @@ app.get('/api/gcp/bucket/load', async (req: Request, res: Response) => {
 const sharedJustificationsBucket = () =>
   process.env.GCP_BUCKET_NAME || 'vtal-bucket-financeiro-prd';
 
+const JUSTIFICATIONS_BQ_PROJECT = process.env.GCP_PROJECT_ID || 'vtal-fpea-prd';
+const JUSTIFICATIONS_BQ_DATASET = process.env.JUSTIFICATIONS_BQ_DATASET || '419556';
+const JUSTIFICATIONS_BQ_HISTORY_TABLE =
+  process.env.JUSTIFICATIONS_BQ_HISTORY_TABLE || 'JUSTIFICATIVAS_FPA_BUCKET_HIST';
+
+type StoredImpact = {
+  id?: unknown;
+  name?: unknown;
+  value?: unknown;
+  justification?: unknown;
+};
+
+const normalizedCompanyName = (companyId: string) => {
+  const company = companyId.toLowerCase();
+  if (company === 'nio') return 'NIO';
+  if (company === 'vtal') return 'V.tal';
+  if (company === 'tecto') return 'Tecto';
+  return companyId;
+};
+
+const periodToBigQueryDate = (period: string) => {
+  const match = period.match(/^(\d{4})[\/-](\d{1,2})$/);
+  if (!match) return null;
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  return `${match[1]}-${String(month).padStart(2, '0')}-01`;
+};
+
+const flattenJustificationSnapshot = (
+  companyId: string,
+  objectPath: string,
+  payload: Record<string, unknown>,
+  period: string,
+) => {
+  const periodDate = periodToBigQueryDate(period);
+  if (!periodDate) throw new Error(`Período inválido para sincronização: ${period}`);
+
+  const row = payload.row && typeof payload.row === 'object'
+    ? payload.row as Record<string, unknown>
+    : {};
+  const periods = payload.periods && typeof payload.periods === 'object'
+    ? payload.periods as Record<string, unknown>
+    : {};
+  const periodData = periods[period] && typeof periods[period] === 'object'
+    ? periods[period] as Record<string, unknown>
+    : {};
+  const metadataByPeriod = payload.periodMetadata && typeof payload.periodMetadata === 'object'
+    ? payload.periodMetadata as Record<string, unknown>
+    : {};
+  const periodMetadata = metadataByPeriod[period] && typeof metadataByPeriod[period] === 'object'
+    ? metadataByPeriod[period] as Record<string, unknown>
+    : {};
+  const updatedAt = String(periodMetadata.updatedAt || payload.updatedAt || new Date().toISOString());
+  const updatedBy = String(periodMetadata.updatedBy || payload.updatedBy || 'Usuário da aplicação');
+  const snapshotId = createHash('sha256')
+    .update(`${companyId}|${payload.rowId}|${period}|${updatedAt}`)
+    .digest('hex');
+
+  const groups = [
+    { key: 'momImpacts', comparison: 'MOM_VS_MES_ANTERIOR' },
+    { key: 'vsOrcadoImpacts', comparison: 'MES_VS_ORCADO' },
+    { key: 'ytdImpacts', comparison: 'YTD_VS_ORCADO' },
+  ];
+  const rows: Array<Record<string, unknown>> = [];
+
+  for (const group of groups) {
+    const impacts = Array.isArray(periodData[group.key])
+      ? periodData[group.key] as StoredImpact[]
+      : [];
+    for (const impact of impacts) {
+      const numericValue = Number(impact.value);
+      rows.push({
+        SNAPSHOT_ID: snapshotId,
+        COMPANY_ID: companyId.toLowerCase(),
+        EMPRESA: normalizedCompanyName(companyId),
+        ROW_ID: String(payload.rowId || ''),
+        CLASSIFICACAO_FPA: String(payload.classification || row.n3 || ''),
+        DIRETORIA: String(row.diretoria || '-'),
+        AREA: String(row.area || '-'),
+        NIVEL_2: String(row.nivel2 || '-'),
+        NIVEL_3: String(row.nivel3 || '-'),
+        NIVEL_4: String(row.nivel4 || '-'),
+        ANOMES: periodDate,
+        PERIODO: period,
+        TIPO_COMPARACAO: group.comparison,
+        IMPACT_ID: String(impact.id || ''),
+        IMPACTO: String(impact.name || ''),
+        VALOR: Number.isFinite(numericValue) ? numericValue : 0,
+        JUSTIFICATIVA: String(impact.justification || ''),
+        UPDATED_AT: updatedAt,
+        UPDATED_BY: updatedBy,
+        OBJECT_PATH: objectPath,
+        IS_EMPTY_SNAPSHOT: false,
+      });
+    }
+  }
+
+  // Mantém o snapshot mesmo quando todas as justificativas forem apagadas.
+  // A view usa este registro para não ressuscitar impactos de versões antigas.
+  if (rows.length === 0) {
+    rows.push({
+      SNAPSHOT_ID: snapshotId,
+      COMPANY_ID: companyId.toLowerCase(),
+      EMPRESA: normalizedCompanyName(companyId),
+      ROW_ID: String(payload.rowId || ''),
+      CLASSIFICACAO_FPA: String(payload.classification || row.n3 || ''),
+      DIRETORIA: String(row.diretoria || '-'),
+      AREA: String(row.area || '-'),
+      NIVEL_2: String(row.nivel2 || '-'),
+      NIVEL_3: String(row.nivel3 || '-'),
+      NIVEL_4: String(row.nivel4 || '-'),
+      ANOMES: periodDate,
+      PERIODO: period,
+      TIPO_COMPARACAO: 'SEM_IMPACTOS',
+      IMPACT_ID: '',
+      IMPACTO: '',
+      VALOR: 0,
+      JUSTIFICATIVA: '',
+      UPDATED_AT: updatedAt,
+      UPDATED_BY: updatedBy,
+      OBJECT_PATH: objectPath,
+      IS_EMPTY_SNAPSHOT: true,
+    });
+  }
+
+  return rows;
+};
+
+async function syncJustificationSnapshotToBigQuery(
+  companyId: string,
+  objectPath: string,
+  payload: Record<string, unknown>,
+  period: string,
+) {
+  const bigquery = getBigQueryClient({
+    projectId: JUSTIFICATIONS_BQ_PROJECT,
+    credentials: defaultCredentials,
+  });
+  const rows = flattenJustificationSnapshot(companyId, objectPath, payload, period);
+  const rawRows = rows.map((row, index) => ({
+    insertId: `${row.SNAPSHOT_ID}-${index}`,
+    json: row,
+  }));
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await bigquery
+        .dataset(JUSTIFICATIONS_BQ_DATASET)
+        .table(JUSTIFICATIONS_BQ_HISTORY_TABLE)
+        .insert(rawRows, { raw: true });
+      return rows.length;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    }
+  }
+  throw lastError;
+}
+
 const safeObjectSegment = (value: unknown, fallback: string) => {
   const normalized = String(value || fallback)
     .normalize('NFD')
@@ -807,7 +967,21 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
             metadata: { companyId, rowId: String(row.id), updatedAt },
           },
         });
-        return res.json({ success: true, bucket: bucketName, objectPath, period, updatedAt });
+        const syncedRows = await syncJustificationSnapshotToBigQuery(
+          companyId,
+          objectPath,
+          payload,
+          period,
+        );
+        return res.json({
+          success: true,
+          bucket: bucketName,
+          objectPath,
+          period,
+          updatedAt,
+          bigQuerySynced: true,
+          bigQueryRows: syncedRows,
+        });
       } catch (error: unknown) {
         const code = (error as { code?: number | string }).code;
         if ((code === 412 || code === '412') && attempt < 5) continue;
