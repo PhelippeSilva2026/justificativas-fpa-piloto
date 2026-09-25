@@ -173,8 +173,9 @@ export function formatShortMonthYear(input: unknown): string {
   return str;
 }
 
-export function formatCurrencyShort(value: number): string {
-  const sign = value < 0 ? '-' : '+';
+export function formatCurrencyShort(value: number, includePlusSign: boolean = true): string {
+  if (isNaN(value) || value === null || value === undefined) return 'R$ 0';
+  const sign = value < 0 ? '-' : (value > 0 && includePlusSign ? '+' : '');
   const absVal = Math.abs(value);
   if (absVal >= 1_000_000) {
     return `${sign}R$ ${(absVal / 1_000_000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}M`;

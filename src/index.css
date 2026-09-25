@@ -18,7 +18,18 @@
   }
 }
 
-.animate-bounce-short {
-  animation: bounceShort 0.6s ease-in-out;
+/* Scrollbar elegante para o painel de chat */
+.custom-chat-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-chat-scrollbar::-webkit-scrollbar-track {
+  background: #F8F9FA;
+}
+.custom-chat-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #B0B4B5;
+  border-radius: 9999px;
+}
+.custom-chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #1A1A1A;
 }
 

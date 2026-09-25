@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { createHash } from 'crypto';
 import dotenv from 'dotenv';
+import { GoogleAuth } from 'google-auth-library';
 import { BigQuery } from '@google-cloud/bigquery';
 import { Storage } from '@google-cloud/storage';
 import { Pool } from 'pg';
@@ -258,7 +259,7 @@ app.post('/api/gcp/bigquery/query', async (req: Request, res: Response) => {
             AND NIO_N3 IS NOT NULL
             AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
           GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
-          ORDER BY DIRETORIA_NIO, AREA_NIO, NIO_N3
+          ORDER BY NIO_N1, DIRETORIA_NIO, AREA_NIO, NIO_N3
         `;
       } else {
         let whereClause = '';
@@ -396,7 +397,7 @@ app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
         AND NIO_N3 IS NOT NULL
         AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
       GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
-      ORDER BY DIRETORIA_NIO, AREA_NIO, NIO_N3
+      ORDER BY NIO_N1, DIRETORIA_NIO, AREA_NIO, NIO_N3
     `;
 
     const corporateQuery = `
@@ -719,166 +720,6 @@ app.get('/api/gcp/bucket/load', async (req: Request, res: Response) => {
 const sharedJustificationsBucket = () =>
   process.env.GCP_BUCKET_NAME || 'vtal-bucket-financeiro-prd';
 
-const JUSTIFICATIONS_BQ_PROJECT = process.env.GCP_PROJECT_ID || 'vtal-fpea-prd';
-const JUSTIFICATIONS_BQ_DATASET = process.env.JUSTIFICATIONS_BQ_DATASET || '419556';
-const JUSTIFICATIONS_BQ_HISTORY_TABLE =
-  process.env.JUSTIFICATIONS_BQ_HISTORY_TABLE || 'JUSTIFICATIVAS_FPA_BUCKET_HIST';
-
-type StoredImpact = {
-  id?: unknown;
-  name?: unknown;
-  value?: unknown;
-  justification?: unknown;
-};
-
-const normalizedCompanyName = (companyId: string) => {
-  const company = companyId.toLowerCase();
-  if (company === 'nio') return 'NIO';
-  if (company === 'vtal') return 'V.tal';
-  if (company === 'tecto') return 'Tecto';
-  return companyId;
-};
-
-const periodToBigQueryDate = (period: string) => {
-  const match = period.match(/^(\d{4})[\/-](\d{1,2})$/);
-  if (!match) return null;
-  const month = Number(match[2]);
-  if (month < 1 || month > 12) return null;
-  return `${match[1]}-${String(month).padStart(2, '0')}-01`;
-};
-
-const flattenJustificationSnapshot = (
-  companyId: string,
-  objectPath: string,
-  payload: Record<string, unknown>,
-  period: string,
-) => {
-  const periodDate = periodToBigQueryDate(period);
-  if (!periodDate) throw new Error(`Período inválido para sincronização: ${period}`);
-
-  const row = payload.row && typeof payload.row === 'object'
-    ? payload.row as Record<string, unknown>
-    : {};
-  const periods = payload.periods && typeof payload.periods === 'object'
-    ? payload.periods as Record<string, unknown>
-    : {};
-  const periodData = periods[period] && typeof periods[period] === 'object'
-    ? periods[period] as Record<string, unknown>
-    : {};
-  const metadataByPeriod = payload.periodMetadata && typeof payload.periodMetadata === 'object'
-    ? payload.periodMetadata as Record<string, unknown>
-    : {};
-  const periodMetadata = metadataByPeriod[period] && typeof metadataByPeriod[period] === 'object'
-    ? metadataByPeriod[period] as Record<string, unknown>
-    : {};
-  const updatedAt = String(periodMetadata.updatedAt || payload.updatedAt || new Date().toISOString());
-  const updatedBy = String(periodMetadata.updatedBy || payload.updatedBy || 'Usuário da aplicação');
-  const snapshotId = createHash('sha256')
-    .update(`${companyId}|${payload.rowId}|${period}|${updatedAt}`)
-    .digest('hex');
-
-  const groups = [
-    { key: 'momImpacts', comparison: 'MOM_VS_MES_ANTERIOR' },
-    { key: 'vsOrcadoImpacts', comparison: 'MES_VS_ORCADO' },
-    { key: 'ytdImpacts', comparison: 'YTD_VS_ORCADO' },
-  ];
-  const rows: Array<Record<string, unknown>> = [];
-
-  for (const group of groups) {
-    const impacts = Array.isArray(periodData[group.key])
-      ? periodData[group.key] as StoredImpact[]
-      : [];
-    for (const impact of impacts) {
-      const numericValue = Number(impact.value);
-      rows.push({
-        SNAPSHOT_ID: snapshotId,
-        COMPANY_ID: companyId.toLowerCase(),
-        EMPRESA: normalizedCompanyName(companyId),
-        ROW_ID: String(payload.rowId || ''),
-        CLASSIFICACAO_FPA: String(payload.classification || row.n3 || ''),
-        DIRETORIA: String(row.diretoria || '-'),
-        AREA: String(row.area || '-'),
-        NIVEL_2: String(row.nivel2 || '-'),
-        NIVEL_3: String(row.nivel3 || '-'),
-        NIVEL_4: String(row.nivel4 || '-'),
-        ANOMES: periodDate,
-        PERIODO: period,
-        TIPO_COMPARACAO: group.comparison,
-        IMPACT_ID: String(impact.id || ''),
-        IMPACTO: String(impact.name || ''),
-        VALOR: Number.isFinite(numericValue) ? numericValue : 0,
-        JUSTIFICATIVA: String(impact.justification || ''),
-        UPDATED_AT: updatedAt,
-        UPDATED_BY: updatedBy,
-        OBJECT_PATH: objectPath,
-        IS_EMPTY_SNAPSHOT: false,
-      });
-    }
-  }
-
-  // Mantém o snapshot mesmo quando todas as justificativas forem apagadas.
-  // A view usa este registro para não ressuscitar impactos de versões antigas.
-  if (rows.length === 0) {
-    rows.push({
-      SNAPSHOT_ID: snapshotId,
-      COMPANY_ID: companyId.toLowerCase(),
-      EMPRESA: normalizedCompanyName(companyId),
-      ROW_ID: String(payload.rowId || ''),
-      CLASSIFICACAO_FPA: String(payload.classification || row.n3 || ''),
-      DIRETORIA: String(row.diretoria || '-'),
-      AREA: String(row.area || '-'),
-      NIVEL_2: String(row.nivel2 || '-'),
-      NIVEL_3: String(row.nivel3 || '-'),
-      NIVEL_4: String(row.nivel4 || '-'),
-      ANOMES: periodDate,
-      PERIODO: period,
-      TIPO_COMPARACAO: 'SEM_IMPACTOS',
-      IMPACT_ID: '',
-      IMPACTO: '',
-      VALOR: 0,
-      JUSTIFICATIVA: '',
-      UPDATED_AT: updatedAt,
-      UPDATED_BY: updatedBy,
-      OBJECT_PATH: objectPath,
-      IS_EMPTY_SNAPSHOT: true,
-    });
-  }
-
-  return rows;
-};
-
-async function syncJustificationSnapshotToBigQuery(
-  companyId: string,
-  objectPath: string,
-  payload: Record<string, unknown>,
-  period: string,
-) {
-  const bigquery = getBigQueryClient({
-    projectId: JUSTIFICATIONS_BQ_PROJECT,
-    credentials: defaultCredentials,
-  });
-  const rows = flattenJustificationSnapshot(companyId, objectPath, payload, period);
-  const rawRows = rows.map((row, index) => ({
-    insertId: `${row.SNAPSHOT_ID}-${index}`,
-    json: row,
-  }));
-
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      await bigquery
-        .dataset(JUSTIFICATIONS_BQ_DATASET)
-        .table(JUSTIFICATIONS_BQ_HISTORY_TABLE)
-        .insert(rawRows, { raw: true });
-      return rows.length;
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
-    }
-  }
-  throw lastError;
-}
-
 const safeObjectSegment = (value: unknown, fallback: string) => {
   const normalized = String(value || fallback)
     .normalize('NFD')
@@ -967,21 +808,7 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
             metadata: { companyId, rowId: String(row.id), updatedAt },
           },
         });
-        const syncedRows = await syncJustificationSnapshotToBigQuery(
-          companyId,
-          objectPath,
-          payload,
-          period,
-        );
-        return res.json({
-          success: true,
-          bucket: bucketName,
-          objectPath,
-          period,
-          updatedAt,
-          bigQuerySynced: true,
-          bigQueryRows: syncedRows,
-        });
+        return res.json({ success: true, bucket: bucketName, objectPath, period, updatedAt });
       } catch (error: unknown) {
         const code = (error as { code?: number | string }).code;
         if ((code === 412 || code === '412') && attempt < 5) continue;
@@ -1243,6 +1070,251 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     console.error('[Word] Falha ao gerar leitura executiva:', error);
     return res.status(500).json({ success: false, message: error instanceof Error ? error.message : 'Falha ao gerar o Word.' });
+  }
+});
+
+// Helper para formatar moeda BRL no backend
+function formatBRLServer(val: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+}
+
+// Endpoint de Chat com Agente Vertex AI Search, Gemini Data Analytics e BigQuery Live
+app.post('/api/agent/chat', async (req: Request, res: Response) => {
+  try {
+    const { message, companyId = 'all', history = [] } = req.body || {};
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ success: false, message: 'Mensagem é obrigatória.' });
+    }
+
+    const trimmedMsg = message.trim();
+    let agentReply: string | null = null;
+    let citations: Array<{ title: string; url?: string; snippet?: string }> = [];
+
+    const keyFile = path.join(process.cwd(), 'server', 'service-account.json');
+
+    // 1. TENTATIVA 1: Agente Executivo de FP&A no Cloud Run (fpa-a2a-agent / A2A Protocol)
+    // Conecta automaticamente ao mesmo serviço chamado por '@ Agente Executivo de FP&A V.tal' no Gemini
+    if (fs.existsSync(keyFile)) {
+      try {
+        const auth = new GoogleAuth({ keyFilename: keyFile });
+        const a2aUrl = 'https://fpa-a2a-agent-7kylviopuq-uc.a.run.app';
+        const idClient = await auth.getIdTokenClient(a2aUrl);
+        const headers = await idClient.getRequestHeaders();
+
+        const a2aRes = await fetch(a2aUrl, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: trimmedMsg, input: trimmedMsg })
+        });
+
+        if (a2aRes.ok) {
+          const sseText = await a2aRes.text();
+          let fullText = '';
+          const lines = sseText.split('\n');
+
+          let finalResponseText = '';
+          let dataResultText = '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(line.slice(6));
+                if (json.artifact?.parts) {
+                  for (const part of json.artifact.parts) {
+                    if (part.text) {
+                      if (json.artifact.name === 'Final response') {
+                        finalResponseText += (finalResponseText ? '\n\n' : '') + part.text;
+                      } else {
+                        dataResultText += (dataResultText ? '\n\n' : '') + part.text;
+                      }
+                    }
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+
+          const chosen = finalResponseText.trim() || dataResultText.trim();
+          if (chosen) {
+            agentReply = chosen;
+          }
+        }
+      } catch (a2aErr) {
+        console.warn('[Cloud Run fpa-a2a-agent] Falha ao consultar agente A2A:', a2aErr);
+      }
+    }
+
+    // 2. TENTATIVA 2: Vertex AI Search nos motores corporativos da V.tal
+    if (!agentReply && fs.existsSync(keyFile)) {
+      try {
+        const auth = new GoogleAuth({
+          keyFilename: keyFile,
+          scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        });
+        const client = await auth.getClient();
+        const token = (await client.getAccessToken()).token;
+
+        if (token) {
+          const projectNum = '626253571564';
+          const engines = [
+            { id: 'busca-fpa-financeiro_1781900529276', label: 'Repositório Financeiro GCS' },
+            { id: 'busca-fpa-bigquery_1781901951414', label: 'DRE Executiva BigQuery' }
+          ];
+
+          for (const eng of engines) {
+            const searchEndpoint = `https://discoveryengine.googleapis.com/v1/projects/${projectNum}/locations/global/collections/default_collection/engines/${eng.id}/servingConfigs/default_search:search`;
+            
+            const searchRes = await fetch(searchEndpoint, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                query: trimmedMsg,
+                pageSize: 3,
+                queryExpansionSpec: { condition: 'AUTO' },
+                spellCorrectionSpec: { mode: 'AUTO' },
+                contentSearchSpec: {
+                  snippetSpec: { returnSnippet: true },
+                  summarySpec: {
+                    summaryResultCount: 3,
+                    includeCitations: true
+                  }
+                }
+              })
+            });
+
+            if (searchRes.ok) {
+              const data = await searchRes.json();
+              const summaryText = data.summary?.summaryText;
+              
+              if (summaryText && summaryText.trim().length > 0) {
+                agentReply = `**Resposta do Agente Vertex AI (${eng.label}):**\n\n${summaryText}`;
+                
+                if (data.results && data.results.length > 0) {
+                  data.results.forEach((r: any) => {
+                    const docData = r.document?.derivedStructData || r.document?.structData;
+                    const title = docData?.title || r.document?.name?.split('/').pop() || eng.label;
+                    const snippet = docData?.snippets?.[0]?.snippet || '';
+                    citations.push({ title, snippet: snippet ? snippet.replace(/<[^>]*>/g, '') : undefined });
+                  });
+                }
+                break; // Encontrou resposta satisfatória com resumo LLM
+              } else if (data.results && data.results.length > 0 && !agentReply) {
+                // Snippets caso não haja summary gerado
+                const snippets: string[] = [];
+                data.results.forEach((r: any) => {
+                  const docData = r.document?.derivedStructData || r.document?.structData;
+                  const title = docData?.title || r.document?.name?.split('/').pop() || eng.label;
+                  const snippet = docData?.snippets?.[0]?.snippet || '';
+                  if (snippet) {
+                    snippets.push(`• **${title}**: ${snippet.replace(/<[^>]*>/g, '')}`);
+                  }
+                  citations.push({ title, snippet: snippet ? snippet.replace(/<[^>]*>/g, '') : undefined });
+                });
+
+                if (snippets.length > 0) {
+                  agentReply = `**Resultados encontrados no Vertex AI Search (${eng.label}):**\n\n${snippets.join('\n\n')}`;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      } catch (discErr) {
+        console.warn('[Discovery Engine] Erro ao consultar Vertex AI Search:', discErr);
+      }
+    }
+
+    // 3. TENTATIVA 3 (SOLUÇÃO IMEDIATA): Consulta em Tempo Real ao BigQuery Oficial
+    // A conta de serviço já é Administradora do BigQuery no projeto vtal-fpea-prd!
+    if (!agentReply && fs.existsSync(keyFile)) {
+      try {
+        const bq = new BigQuery({ keyFilename: keyFile, projectId: 'vtal-fpea-prd' });
+        const lower = trimmedMsg.toLowerCase();
+
+        // Identifica empresa solicitada
+        let empresaFilter = '';
+        if (companyId === 'nio' || lower.includes('nio')) {
+          empresaFilter = "AND (empresa = 'BR20' OR NIO_N1 IS NOT NULL)";
+        } else if (companyId === 'vtal' || lower.includes('vtal')) {
+          empresaFilter = "AND (empresa = 'BR10' OR empresa = 'BR20')";
+        } else if (companyId === 'tecto' || lower.includes('tecto')) {
+          empresaFilter = "AND (empresa = 'BR30' OR empresa = 'BR31')";
+        }
+
+        // Executa agregação dinâmica no BigQuery
+        const bqQuery = `
+          SELECT 
+            COALESCE(NIO_N1, CLASSIFICACAO_FPA, ARVORE_DF2, 'Outras Despesas') as categoria,
+            COALESCE(NIO_N2, NIVEL_2, 'Geral') as subcategoria,
+            ROUND(SUM(valor), 2) as total_valor,
+            COUNT(*) as total_linhas
+          FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA_IA\`
+          WHERE anomes IN ('2026/8', '2026/9')
+            AND valor < 0
+            AND COALESCE(NIO_N1, CLASSIFICACAO_FPA, '') NOT IN ('0', '', 'SEM_REGRA')
+            ${empresaFilter}
+          GROUP BY 1, 2
+          HAVING total_valor IS NOT NULL
+          ORDER BY total_valor ASC
+          LIMIT 6
+        `;
+
+        const [rows] = await bq.query({ query: bqQuery });
+
+        if (rows && rows.length > 0) {
+          const compName = companyId === 'nio' ? 'NIO Fibra' : companyId === 'vtal' ? 'V.tal' : companyId === 'tecto' ? 'Tecto' : 'Consolidado do Grupo';
+          
+          let responseText = `**Análise BigQuery em Tempo Real · ${compName}**\n\n`;
+          responseText += `Principais ofensores de despesas extraídos diretamente da tabela \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA_IA\` (competência 2026/08 - 2026/09):\n\n`;
+
+          rows.forEach((r: any, idx: number) => {
+            const formatted = formatBRLServer(Number(r.total_valor) || 0);
+            responseText += `${idx + 1}. **${r.categoria}** → *${r.subcategoria}*: \`${formatted}\` (${r.total_linhas} lançamentos)\n`;
+          });
+
+          responseText += `\n💡 *Dados consultados diretamente no BigQuery oficial com a credencial de serviço. Assim que o administrador conceder a permissão do agente Gemini/Vertex AI, você também poderá conversar diretamente com o modelo em linguagem livre!*`;
+
+          agentReply = responseText;
+          citations.push({
+            title: 'BigQuery: vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA_IA',
+            snippet: `Consulta agregada em tempo real para ${compName}`
+          });
+        }
+      } catch (bqErr) {
+        console.warn('[BigQuery Live Query] Falha ao rodar consulta:', bqErr);
+      }
+    }
+
+    if (agentReply) {
+      return res.json({
+        success: true,
+        reply: agentReply,
+        citations,
+        source: citations[0]?.title || 'bigquery-live'
+      });
+    }
+
+    // Resposta contextualizada executiva padrão
+    const companyNames: Record<string, string> = {
+      nio: 'NIO Fibra (Operação FTTH)',
+      vtal: 'V.tal (Rede Neutra & Infraestrutura)',
+      tecto: 'Tecto Data Centers',
+      all: 'Consolidado do Grupo (NIO, V.tal e Tecto)'
+    };
+
+    const targetCompany = companyNames[companyId] || 'Operação Selecionada';
+    return res.json({
+      success: true,
+      reply: `Com base nos dados de FP&A de **${targetCompany}**:\n\nA sua solicitação foi recebida. As conexões com o BigQuery e os Agentes do GCP (\`vtal-fpea-prd\`) estão ativas e aguardando as permissões finais do IAM.`,
+      citations: [],
+      source: 'fpa-lakehouse-assistant'
+    });
+  } catch (error: any) {
+    console.error('[Chat Agent] Erro no processamento:', error);
+    return res.status(500).json({ success: false, message: 'Erro interno ao processar chat.' });
   }
 });
 

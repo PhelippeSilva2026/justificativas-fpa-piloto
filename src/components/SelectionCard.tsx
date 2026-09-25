@@ -61,9 +61,14 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
     <div className="bg-white rounded-3xl p-6 border border-[#A7AC98]/40 shadow-sm flex flex-col justify-between h-full">
       {/* Topo do Card com Título e Contador */}
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-bold text-[#14412A]">
-          2. Selecionar Linha de Despesa ({isCorporate ? 'Classificação FP&A' : 'N3'})
-        </h2>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#14412A] text-white text-xs font-bold shrink-0">
+            2
+          </span>
+          <h2 className="text-base font-bold text-[#14412A]">
+            Selecionar Linha de Despesa ({isCorporate ? 'Classificação FP&A' : 'N3'})
+          </h2>
+        </div>
         <span className="text-xs text-[#8C9283] font-medium">
           {rows.length} {rows.length === 1 ? 'linha disponível' : 'linhas disponíveis'}
         </span>
@@ -80,11 +85,19 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
           {rows.length === 0 ? (
             <option value="">Nenhuma linha para os filtros selecionados</option>
           ) : (
-            rows.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.n3}
-              </option>
-            ))
+            rows.map((r) => {
+              const isConsol =
+                (r.n1 === '0' && r.n2 === '0' && r.n3 === '0') ||
+                r.n3 === '0' ||
+                `${r.n1} | ${r.n2} | ${r.n3}`.trim() === '0 | 0 | 0' ||
+                (r.n1 || '').toLowerCase() === 'consolidado' ||
+                (r.n3 || '').toLowerCase() === 'consolidado';
+              return (
+                <option key={r.id} value={r.id}>
+                  {isConsol ? 'Consolidado' : r.n3}
+                </option>
+              );
+            })
           )}
         </select>
         <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-[#6E7769]">
@@ -119,7 +132,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
             {isCorporate ? 'NÍVEL 3' : 'GRUPO / N1'}
           </div>
           <div className="text-xs font-bold text-[#14412A] truncate mt-0.5" title={selectedRow ? `${selectedRow.n1} / ${selectedRow.n2}` : '-'}>
-            {selectedRow ? `${selectedRow.n1}` : '-'}
+            {selectedRow ? ((selectedRow.n1 === '0' && selectedRow.n2 === '0') ? 'Consolidado' : selectedRow.n1) : '-'}
           </div>
         </div>
 
@@ -129,7 +142,9 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
             {isCorporate ? 'NÍVEL 4' : 'RESPONSÁVEL'}
           </div>
           <div className="text-xs font-bold text-[#14412A] truncate mt-0.5" title={selectedRow?.responsavel || '-'}>
-            {selectedRow?.responsavel || '-'}
+            {selectedRow?.responsavel && selectedRow.responsavel !== '0' && selectedRow.responsavel !== '-'
+              ? selectedRow.responsavel
+              : (selectedRow?.n1 === '0' ? 'Diretoria Executiva' : '-')}
           </div>
         </div>
 

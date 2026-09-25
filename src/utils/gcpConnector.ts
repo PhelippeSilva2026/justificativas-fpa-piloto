@@ -263,10 +263,43 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
     };
   });
 
+  // Ordena as linhas: Consolidado sempre primeiro, e demais ordenadas estritamente por NIO_N1 (n1), n2, n3
+  rows.sort((a, b) => {
+    const isConsolA =
+      (a.n1 === '0' && a.n2 === '0' && a.n3 === '0') ||
+      a.n1 === '0' ||
+      `${a.n1} | ${a.n2} | ${a.n3}`.trim() === '0 | 0 | 0' ||
+      (a.n1 || '').toLowerCase() === 'consolidado' ||
+      (a.n3 || '').toLowerCase() === 'consolidado';
+    const isConsolB =
+      (b.n1 === '0' && b.n2 === '0' && b.n3 === '0') ||
+      b.n1 === '0' ||
+      `${b.n1} | ${b.n2} | ${b.n3}`.trim() === '0 | 0 | 0' ||
+      (b.n1 || '').toLowerCase() === 'consolidado' ||
+      (b.n3 || '').toLowerCase() === 'consolidado';
+
+    if (isConsolA && !isConsolB) return -1;
+    if (!isConsolA && isConsolB) return 1;
+
+    const n1A = (a.n1 || '').trim();
+    const n1B = (b.n1 || '').trim();
+    const cmpN1 = n1A.localeCompare(n1B, 'pt-BR', { numeric: true, sensitivity: 'base' });
+    if (cmpN1 !== 0) return cmpN1;
+
+    const n2A = (a.n2 || '').trim();
+    const n2B = (b.n2 || '').trim();
+    const cmpN2 = n2A.localeCompare(n2B, 'pt-BR', { numeric: true, sensitivity: 'base' });
+    if (cmpN2 !== 0) return cmpN2;
+
+    const n3A = (a.n3 || '').trim();
+    const n3B = (b.n3 || '').trim();
+    return n3A.localeCompare(n3B, 'pt-BR', { numeric: true, sensitivity: 'base' });
+  });
+
   return {
     monthPrevious: normPrev,
     monthCurrent: normCurr,
-    rows, // Mantém todas as linhas cadastradas no banco para garantir que todas as despesas N3 estejam disponíveis
+    rows,
     rawRecords: records,
   };
 }

@@ -17,6 +17,8 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
+import { generateNioNarrativeWithGemini } from './geminiExecutiveReport';
+import { buildNioExecutiveDocx } from './nioDocBuilder';
 
 export type ReportCompanyId = 'nio' | 'vtal' | 'tecto';
 
@@ -199,6 +201,21 @@ const bullet = (text: string) => new Paragraph({
 const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
 
 export async function generateExecutiveWordReport(input: WordReportInput): Promise<Buffer> {
+  // Para a NIO, gera o documento executivo completo de 8 páginas idêntico ao modelo com gráficos e síntese do Gemini
+  if (input.companyId === 'nio') {
+    const narrative = await generateNioNarrativeWithGemini({
+      period: input.period,
+      financialRows: input.financialRows,
+      physicalRows: input.physicalRows,
+      justifications: input.justifications as Record<string, unknown>,
+    });
+    return buildNioExecutiveDocx({
+      period: input.period,
+      narrative,
+      logoBuffer: input.logo,
+    });
+  }
+
   const company = COMPANY[input.companyId];
   const label = periodLabel(input.period);
   const totals = input.financialRows.reduce((acc, row) => ({

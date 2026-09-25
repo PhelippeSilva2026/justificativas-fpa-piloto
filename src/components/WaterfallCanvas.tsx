@@ -25,7 +25,7 @@ export const WaterfallCanvas: React.FC<WaterfallCanvasProps> = ({ config, classN
       const dpr = Math.max(window.devicePixelRatio || 1, 2);
       
       const displayWidth = Math.round(rect.width);
-      const displayHeight = Math.round(rect.height > 0 ? rect.height : 360);
+      const displayHeight = Math.round(rect.height > 0 ? rect.height : 260);
 
       // Define tamanho real de buffer ultra-nítido
       canvas.width = Math.round(displayWidth * dpr);
@@ -90,7 +90,7 @@ export const WaterfallCanvas: React.FC<WaterfallCanvasProps> = ({ config, classN
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full min-h-[340px] flex flex-col ${className}`}
+      className={`relative w-full h-full flex flex-col ${className.includes('min-h-') ? '' : 'min-h-[240px]'} ${className}`}
     >
       <canvas
         ref={canvasRef}

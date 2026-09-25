@@ -13,10 +13,10 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = ({
   className = ''
 }) => {
   const sizeClasses = {
-    sm: 'w-9 h-9',
-    md: 'w-13 h-13 sm:w-14 sm:h-14',
-    lg: 'w-16 h-16',
-    xl: 'w-24 h-24',
+    sm: 'w-7 h-7 sm:w-8 sm:h-8',
+    md: 'w-10 h-10 sm:w-11 sm:h-11',
+    lg: 'w-12 h-12 sm:w-14 sm:h-14',
+    xl: 'w-16 h-16 sm:w-18 sm:h-18',
   };
 
   const logoPaths: Record<CompanyId, string> = {

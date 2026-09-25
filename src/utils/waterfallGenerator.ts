@@ -3,11 +3,28 @@ import { formatCurrencyShort } from './formatters';
 
 export { formatCurrencyShort };
 
+export interface WaterfallDeltaBracket {
+  fromIndex: number;
+  toIndex: number;
+  label: string;
+  value: number;
+  percent: number;
+  type?: 'mom' | 'vsOrcado' | 'ytd';
+}
+
 export interface WaterfallConfig {
   title: string;
   bars: WaterfallBarItem[];
   minVal: number;
   maxVal: number;
+  brackets?: WaterfallDeltaBracket[];
+}
+
+function formatDeltaBadgeText(val: number, pct: number): string {
+  const valStr = formatCurrencyShort(val, true);
+  const pctSign = pct > 0 ? '+' : '';
+  const pctStr = `${pctSign}${pct.toFixed(1).replace('.', ',')}%`;
+  return `${valStr} (${pctStr})`;
 }
 
 /**
@@ -85,21 +102,67 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
     color: '#14412A',
   });
 
-  // Cálculo de limites do eixo Y
+  // Cálculo de limites do eixo Y com folga superior generosa
   let min = 0;
   let max = 0;
   bars.forEach((b) => {
     min = Math.min(min, b.startValue, b.endValue);
     max = Math.max(max, b.startValue, b.endValue);
   });
-  // Adiciona margem de 15% para os rótulos de valores não cortarem
-  max = max > 0 ? max * 1.18 : 100;
+  // Adiciona folga superior substancial (55% acima do valor máximo ou 45% acima de zero se todos negativos)
+  // para que os rótulos de valores numéricos e as linhas/badges de delta NUNCA encostem nas barras
+  if (max > 0) {
+    max = max * 1.55;
+  } else {
+    max = Math.abs(min) > 0 ? Math.abs(min) * 0.45 : 100;
+  }
+  if (min < 0) {
+    min = min * 1.15;
+  }
+
+  // Linhas superiores de variação (MoM: Real M-1 -> Real 2026 e Vs Orçado: Real 2026 -> Orçado 2026)
+  const realCurrentIndex = 1 + momImpacts.length;
+  const orcadoCurrentIndex = realCurrentIndex + 1 + vsOrcadoImpacts.length;
+
+  const momDelta = row.diffMMinus1Abs !== undefined && row.diffMMinus1Abs !== 0
+    ? row.diffMMinus1Abs
+    : row.realCurrent - row.realMMinus1;
+  const momPct = row.diffMMinus1Pct !== undefined && row.diffMMinus1Pct !== 0
+    ? row.diffMMinus1Pct
+    : (row.realMMinus1 !== 0 ? (momDelta / Math.abs(row.realMMinus1)) * 100 : 0);
+
+  const vsOrcDelta = row.diffOrcadoAbs !== undefined && row.diffOrcadoAbs !== 0
+    ? row.diffOrcadoAbs
+    : row.realCurrent - row.orcadoCurrent;
+  const vsOrcPct = row.diffOrcadoPct !== undefined && row.diffOrcadoPct !== 0
+    ? row.diffOrcadoPct
+    : (row.orcadoCurrent !== 0 ? (vsOrcDelta / Math.abs(row.orcadoCurrent)) * 100 : 0);
+
+  const brackets: WaterfallDeltaBracket[] = [
+    {
+      fromIndex: 0,
+      toIndex: realCurrentIndex,
+      label: formatDeltaBadgeText(momDelta, momPct),
+      value: momDelta,
+      percent: momPct,
+      type: 'mom',
+    },
+    {
+      fromIndex: realCurrentIndex,
+      toIndex: orcadoCurrentIndex,
+      label: formatDeltaBadgeText(vsOrcDelta, vsOrcPct),
+      value: vsOrcDelta,
+      percent: vsOrcPct,
+      type: 'vsOrcado',
+    },
+  ];
 
   return {
     title: 'Mês',
     bars,
     minVal: min,
     maxVal: max,
+    brackets,
   };
 }
 
@@ -155,13 +218,42 @@ export function buildYTDWaterfallData(row: DRERow, justifications?: RowJustifica
     min = Math.min(min, b.startValue, b.endValue);
     max = Math.max(max, b.startValue, b.endValue);
   });
-  max = max > 0 ? max * 1.18 : 100;
+  // Folga superior para YTD
+  if (max > 0) {
+    max = max * 1.55;
+  } else {
+    max = Math.abs(min) > 0 ? Math.abs(min) * 0.45 : 100;
+  }
+  if (min < 0) {
+    min = min * 1.15;
+  }
+
+  // Linha superior de delta YTD: Real 2026 YTD até Orçado 2026 YTD
+  const orcadoYtdIndex = 1 + ytdImpacts.length;
+  const ytdDelta = row.diffOrcadoYTDAbs !== undefined && row.diffOrcadoYTDAbs !== 0
+    ? row.diffOrcadoYTDAbs
+    : row.realYTD - row.orcadoYTD;
+  const ytdPct = row.diffOrcadoYTDPct !== undefined && row.diffOrcadoYTDPct !== 0
+    ? row.diffOrcadoYTDPct
+    : (row.orcadoYTD !== 0 ? (ytdDelta / Math.abs(row.orcadoYTD)) * 100 : 0);
+
+  const brackets: WaterfallDeltaBracket[] = [
+    {
+      fromIndex: 0,
+      toIndex: orcadoYtdIndex,
+      label: formatDeltaBadgeText(ytdDelta, ytdPct),
+      value: ytdDelta,
+      percent: ytdPct,
+      type: 'ytd',
+    },
+  ];
 
   return {
     title: 'YTD',
     bars,
     minVal: min,
     maxVal: max,
+    brackets,
   };
 }
 
@@ -207,17 +299,12 @@ export function renderWaterfallToCanvas(
   // Fonte padrão de sistema para máxima nitidez
   const systemFont = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
-  // Título do Gráfico: "Mês" ou "YTD" (Nitidez executiva)
+  // Título do Gráfico: "Mês" ou "YTD" bem no cantinho superior esquerdo
   ctx.fillStyle = '#14412A';
-  ctx.font = `bold ${Math.round(20 * scale)}px ${systemFont}`;
+  ctx.font = `bold ${Math.round(17 * scale)}px ${systemFont}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(config.title, marginLeft, Math.round(14 * scale));
-
-  // Subtítulo de apoio com bom contraste
-  ctx.fillStyle = '#52604D';
-  ctx.font = `${Math.round(12 * scale)}px ${systemFont}`;
-  ctx.fillText('Evolução de desvios em R$', marginLeft + Math.round(70 * scale), Math.round(19 * scale));
+  ctx.fillText(config.title, Math.round(8 * scale), Math.round(6 * scale));
 
   // Eixo Y e Linhas de Grade discretas e nítidas
   const gridSteps = 4;
@@ -240,7 +327,7 @@ export function renderWaterfallToCanvas(
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.setLineDash([]);
-    ctx.fillText(formatCurrencyShort(val), width - Math.round(6 * scale), y);
+    ctx.fillText(formatCurrencyShort(val, false), width - Math.round(6 * scale), y);
     ctx.setLineDash([Math.round(3 * scale), Math.round(3 * scale)]);
   }
   ctx.setLineDash([]);
@@ -324,8 +411,8 @@ export function renderWaterfallToCanvas(
     ctx.textBaseline = 'bottom';
     
     const valText = bar.category === 'positive' || bar.category === 'negative'
-      ? formatCurrencyShort(bar.changeValue)
-      : formatCurrencyShort(bar.endValue).replace('+', '');
+      ? formatCurrencyShort(bar.changeValue, true)
+      : formatCurrencyShort(bar.endValue, false);
     ctx.fillText(valText, Math.round(x + barWidth / 2), labelY);
 
     // Rótulo do eixo X abaixo da barra: 11px negrito com excelente contraste (não embaça)
@@ -343,6 +430,81 @@ export function renderWaterfallToCanvas(
       ctx.fillText(line, Math.round(x + barWidth / 2), height - marginBottom + Math.round(10 * scale) + (lineIdx * Math.round(14 * scale)));
     });
   });
+
+  // Renderização das linhas superiores de variação / delta com pill badge
+  if (config.brackets && config.brackets.length > 0) {
+    // Ponto mais alto das barras no gráfico para posicionar a linha com folga uniforme
+    let minBarTopY = height;
+    bars.forEach((b) => {
+      const bTop = getY(Math.max(b.startValue, b.endValue));
+      if (bTop < minBarTopY) minBarTopY = bTop;
+    });
+
+    // Posição vertical da linha do bracket:
+    // Garante folga segura e limpa acima do topo da maior barra e de seu rótulo numérico
+    // mantendo alinhamento no topo (y ~ 36*scale)
+    const idealBracketY = Math.round(36 * scale);
+    const maxAllowedBracketY = minBarTopY - Math.round(34 * scale);
+    const baseBracketY = Math.max(Math.round(28 * scale), Math.min(idealBracketY, maxAllowedBracketY));
+
+    config.brackets.forEach((bracket) => {
+      const fromIdx = Math.max(0, Math.min(bracket.fromIndex, totalBars - 1));
+      const toIdx = Math.max(0, Math.min(bracket.toIndex, totalBars - 1));
+      if (fromIdx >= toIdx) return;
+
+      const x1 = Math.round(marginLeft + fromIdx * slotWidth + barPadding + barWidth / 2);
+      const x2 = Math.round(marginLeft + toIdx * slotWidth + barPadding + barWidth / 2);
+      const xMid = Math.round((x1 + x2) / 2);
+      const bracketY = baseBracketY;
+
+      const stemH = Math.round(7 * scale);
+
+      // Traçado da linha do bracket (haste descendo em cada extremidade)
+      ctx.strokeStyle = '#6E7769';
+      ctx.lineWidth = Math.max(1.2, Math.round(1.2 * scale));
+      ctx.beginPath();
+      ctx.moveTo(x1, bracketY + stemH);
+      ctx.lineTo(x1, bracketY);
+      ctx.lineTo(x2, bracketY);
+      ctx.lineTo(x2, bracketY + stemH);
+      ctx.stroke();
+
+      // Pill Badge com valor e percentual no centro
+      const badgeText = bracket.label;
+      ctx.font = `bold ${Math.round(10 * scale)}px ${systemFont}`;
+      const textW = ctx.measureText(badgeText).width;
+      const badgeW = Math.round(textW + 16 * scale);
+      const badgeH = Math.round(20 * scale);
+      const badgeX = Math.round(xMid - badgeW / 2);
+      const badgeY = Math.round(bracketY - badgeH / 2);
+      const radius = Math.round(badgeH / 2);
+
+      // Sombra sutil e fundo branco para mascarar a linha horizontal perfeitamente
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.08)';
+      ctx.shadowBlur = Math.round(4 * scale);
+      ctx.shadowOffsetY = Math.round(1.5 * scale);
+      ctx.fillStyle = '#FFFFFF';
+      drawRoundedRect(ctx, badgeX, badgeY, badgeW, badgeH, radius);
+      ctx.fill();
+      ctx.restore();
+
+      // Borda sutil do badge com distinção por sinal
+      const isPositive = bracket.value > 0;
+      const isNegative = bracket.value < 0;
+      ctx.strokeStyle = isNegative ? '#DC2626' : isPositive ? '#16A34A' : '#94A3B8';
+      ctx.lineWidth = Math.max(1, Math.round(1 * scale));
+      drawRoundedRect(ctx, badgeX, badgeY, badgeW, badgeH, radius);
+      ctx.stroke();
+
+      // Texto no centro do badge
+      ctx.fillStyle = isNegative ? '#991B1B' : isPositive ? '#14412A' : '#334155';
+      ctx.font = `bold ${Math.round(10 * scale)}px ${systemFont}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badgeText, xMid, bracketY);
+    });
+  }
 }
 
 function drawRoundedRect(

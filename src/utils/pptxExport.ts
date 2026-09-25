@@ -26,45 +26,64 @@ export async function addSlideForDRERow(
   const company = COMPANIES[companyId] || COMPANIES.nio;
   const titleColor = companyId === 'vtal' ? '0A192F' : companyId === 'tecto' ? '0F172A' : '14412A';
 
-  // 1. TÍTULO DO SLIDE: "N1 | N2 | N3"
-  // Topo esquerdo, Arial, 18pt, em negrito
-  const fullTitle = `${row.n1.toUpperCase()} | ${row.n2} | ${row.n3}`;
+  // 1. TÍTULO DO SLIDE: "N1 | N2 | N3" ou "Consolidado"
+  // Fonte compacta (13-14pt) para evitar quebrar em duas linhas
+  const isConsolidated =
+    (row.n1 === '0' && row.n2 === '0' && row.n3 === '0') ||
+    (row.n1 === '0' && row.n2 === '0') ||
+    `${row.n1} | ${row.n2} | ${row.n3}`.trim() === '0 | 0 | 0' ||
+    (row.n1 || '').trim().toLowerCase() === 'consolidado' ||
+    (row.n3 || '').trim().toLowerCase() === 'consolidado';
+
+  const fullTitle = isConsolidated
+    ? 'Consolidado'
+    : `${(row.n1 || '').toUpperCase()} | ${row.n2 || ''} | ${row.n3 || ''}`;
+
+  // Fonte única padrão de 12pt para TODOS os slides (evita variação visual ao passar os slides)
   slide.addText(fullTitle, {
     x: 0.8,
-    y: 0.45,
-    w: 9.8,
-    h: 0.45,
+    y: 0.42,
+    w: 11.1,
+    h: 0.42,
     fontFace: 'Arial',
-    fontSize: 18,
+    fontSize: 12,
     bold: true,
     color: titleColor,
     valign: 'top',
   });
 
   // 2. SUBTÍTULO: Logo abaixo do título. "Responsável: " (negrito) + nome do gestor (normal). Arial 10pt.
+  const respText = isConsolidated && (!row.responsavel || row.responsavel === '0' || row.responsavel === '-')
+    ? 'Diretoria Executiva / Consolidado'
+    : row.responsavel;
+
   slide.addText(
     [
       { text: 'Responsável: ', options: { bold: true, fontSize: 10, fontFace: 'Arial', color: '192B1C' } },
-      { text: row.responsavel, options: { bold: false, fontSize: 10, fontFace: 'Arial', color: '333333' } },
+      { text: respText, options: { bold: false, fontSize: 10, fontFace: 'Arial', color: '333333' } },
     ],
     {
       x: 0.8,
-      y: 0.92,
-      w: 9.8,
-      h: 0.35,
+      y: 0.86,
+      w: 10.7,
+      h: 0.32,
       valign: 'top',
     }
   );
 
-  // 3. LOGOMARCA NIO: Canto superior direito.
-  // Alinhada para que a margem superior coincida com a linha do título e inferior com o subtítulo.
+  // 3. LOGOMARCA: Canto superior direito, dimensionamento refinado e proporcional
+  // Vtal e Tecto mantêm w: 0.95, h: 0.45 (aprovados). Para NIO, largura reduzida para proporção ideal.
   if (logoDataUrl) {
+    const isNio = companyId === 'nio';
+    const logoW = isNio ? 0.58 : 0.95;
+    const logoH = 0.45;
+    const logoX = 12.70 - logoW;
     slide.addImage({
       data: logoDataUrl,
-      x: 10.9,
-      y: 0.42,
-      w: 1.65,
-      h: 0.8,
+      x: logoX,
+      y: 0.36,
+      w: logoW,
+      h: logoH,
     });
   }
 
@@ -362,7 +381,43 @@ export async function exportToPowerPoint(
   // Pré-gera a logo da empresa em PNG alta resolução
   const logoDataUrl = await getCompanyLogoPngDataUrl(companyId);
 
-  for (const row of rowsToExport) {
+  // Ordenação das linhas para os slides:
+  // O primeiro slide deve ser o Consolidado (caso exista ou se tiver n1 === '0'),
+  // e as demais linhas devem estar ordenadas estritamente pelo campo NIO_N1 (row.n1), seguido por N2 e N3.
+  const sortedRows = [...rowsToExport].sort((a, b) => {
+    const isConsolA =
+      (a.n1 === '0' && a.n2 === '0' && a.n3 === '0') ||
+      a.n1 === '0' ||
+      `${a.n1} | ${a.n2} | ${a.n3}`.trim() === '0 | 0 | 0' ||
+      (a.n1 || '').toLowerCase() === 'consolidado' ||
+      (a.n3 || '').toLowerCase() === 'consolidado';
+    const isConsolB =
+      (b.n1 === '0' && b.n2 === '0' && b.n3 === '0') ||
+      b.n1 === '0' ||
+      `${b.n1} | ${b.n2} | ${b.n3}`.trim() === '0 | 0 | 0' ||
+      (b.n1 || '').toLowerCase() === 'consolidado' ||
+      (b.n3 || '').toLowerCase() === 'consolidado';
+
+    if (isConsolA && !isConsolB) return -1;
+    if (!isConsolA && isConsolB) return 1;
+
+    // Ordenação estrita pelo campo NIO_N1 (row.n1)
+    const n1A = (a.n1 || '').trim();
+    const n1B = (b.n1 || '').trim();
+    const cmpN1 = n1A.localeCompare(n1B, 'pt-BR', { numeric: true, sensitivity: 'base' });
+    if (cmpN1 !== 0) return cmpN1;
+
+    const n2A = (a.n2 || '').trim();
+    const n2B = (b.n2 || '').trim();
+    const cmpN2 = n2A.localeCompare(n2B, 'pt-BR', { numeric: true, sensitivity: 'base' });
+    if (cmpN2 !== 0) return cmpN2;
+
+    const n3A = (a.n3 || '').trim();
+    const n3B = (b.n3 || '').trim();
+    return n3A.localeCompare(n3B, 'pt-BR', { numeric: true, sensitivity: 'base' });
+  });
+
+  for (const row of sortedRows) {
     await addSlideForDRERow(pptx, row, allJustifications[row.id], logoDataUrl, companyId);
   }
 
