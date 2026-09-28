@@ -1,13 +1,14 @@
 import React from 'react';
 import { DRERow, RowJustifications, DeviationImpact } from '../types';
 import { formatCurrencyBRL, parseCurrencyBRL } from '../utils/formatters';
-import { Plus, Trash2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react';
 
 interface ImpactsSectionProps {
   selectedRow: DRERow | null;
   justifications: RowJustifications;
   monthPrevious: string;
   monthCurrent: string;
+  isLoadingJustifications?: boolean;
   onAddImpact: (type: 'mom' | 'vsOrcado' | 'ytd') => void;
   onUpdateImpact: (
     type: 'mom' | 'vsOrcado' | 'ytd',
@@ -91,6 +92,7 @@ interface ImpactRowProps {
   deltaPct: number;
   impacts: DeviationImpact[];
   disabled: boolean;
+  isLoading?: boolean;
   onAddImpact: (type: 'mom' | 'vsOrcado' | 'ytd') => void;
   onUpdateImpact: (
     type: 'mom' | 'vsOrcado' | 'ytd',
@@ -115,6 +117,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
   deltaPct,
   impacts,
   disabled,
+  isLoading = false,
   onAddImpact,
   onUpdateImpact,
   onRemoveImpact,
@@ -241,7 +244,24 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
 
           {/* Lista dos Desvios */}
           <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
-            {impacts.length === 0 ? (
+            {isLoading && impacts.length === 0 ? (
+              <div className="bg-[#FAFBF9] border border-[#CCD8C7] rounded-2xl p-4 my-1 space-y-3">
+                <div className="flex items-center justify-between text-xs text-[#14412A] font-semibold">
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#14412A]" />
+                    Carregando justificativas históricas...
+                  </span>
+                  <span className="text-[10px] text-[#5A6454] font-medium">Sincronizando GCP Bucket</span>
+                </div>
+                <div className="w-full h-2 bg-[#E6ECE2] rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-[#14412A] via-[#39FF00] to-[#14412A] w-2/3 animate-pulse rounded-full" />
+                </div>
+                <div className="space-y-2 pt-1">
+                  <div className="h-7 bg-[#E8EDE5]/70 rounded-xl animate-pulse w-full" />
+                  <div className="h-10 bg-[#E8EDE5]/50 rounded-xl animate-pulse w-full" />
+                </div>
+              </div>
+            ) : impacts.length === 0 ? (
               <div className="bg-[#FAFBF9] border border-dashed border-[#CCD8C7] rounded-2xl p-5 text-center my-1">
                 <p className="text-xs text-[#5A6454] font-medium">
                   {disabled
@@ -310,6 +330,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
   justifications,
   monthPrevious,
   monthCurrent,
+  isLoadingJustifications = false,
   onAddImpact,
   onUpdateImpact,
   onRemoveImpact,
@@ -344,6 +365,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
         deltaPct={momPct}
         impacts={justifications.momImpacts || []}
         disabled={disabled}
+        isLoading={isLoadingJustifications}
         onAddImpact={onAddImpact}
         onUpdateImpact={onUpdateImpact}
         onRemoveImpact={onRemoveImpact}
@@ -366,6 +388,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
         deltaPct={vsOrcPct}
         impacts={justifications.vsOrcadoImpacts || []}
         disabled={disabled}
+        isLoading={isLoadingJustifications}
         onAddImpact={onAddImpact}
         onUpdateImpact={onUpdateImpact}
         onRemoveImpact={onRemoveImpact}
@@ -388,6 +411,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
         deltaPct={ytdPct}
         impacts={justifications.ytdImpacts || []}
         disabled={disabled}
+        isLoading={isLoadingJustifications}
         onAddImpact={onAddImpact}
         onUpdateImpact={onUpdateImpact}
         onRemoveImpact={onRemoveImpact}

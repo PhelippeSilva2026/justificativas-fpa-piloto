@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { createHash } from 'crypto';
+import { EventEmitter } from 'events';
 import dotenv from 'dotenv';
 import { GoogleAuth } from 'google-auth-library';
 import { BigQuery } from '@google-cloud/bigquery';
@@ -17,6 +18,7 @@ import {
 } from './server/wordReport';
 
 dotenv.config();
+EventEmitter.defaultMaxListeners = 100;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -351,139 +353,191 @@ app.get('/api/gcp/default-config', (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
-// Rota 2.2: Carregamento Automático Direto da Tabela no Início
+// Rota 2.2: Carregamento Automático Direto da Tabela no Início (com cache rápido)
 // -------------------------------------------------------------
-app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
-  try {
-    const projectId = 'vtal-fpea-prd';
-    const datasetId = 'agente_fpa';
-    const tableId = 'DRE_FINAL_EXECUTIVA';
-    const fullTable = '`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA`';
+let autoLoadMemoryCache: { timestamp: number; payload: Record<string, unknown> } | null = null;
+let autoLoadInFlight: Promise<Record<string, unknown>> | null = null;
+const AUTO_LOAD_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
-    const bigquery = getBigQueryClient({
-      projectId,
-      credentials: defaultCredentials,
-    });
+async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
+  if (autoLoadInFlight) return autoLoadInFlight;
 
-    let colNames: string[] = [];
+  autoLoadInFlight = (async () => {
     try {
-      const dataset = bigquery.dataset(datasetId);
-      const table = dataset.table(tableId);
-      const [metadata] = await table.getMetadata();
-      colNames = (metadata.schema?.fields || []).map((f: { name: string }) => f.name.toLowerCase());
-    } catch (e) {
-      console.warn('[Auto-Load] Não foi possível inspecionar schema:', e);
+      const projectId = 'vtal-fpea-prd';
+      const datasetId = 'agente_fpa';
+      const tableId = 'DRE_FINAL_EXECUTIVA';
+      const fullTable = '`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA`';
+
+      const bigquery = getBigQueryClient({
+        projectId,
+        credentials: defaultCredentials,
+      });
+
+      let colNames: string[] = [];
+      try {
+        const dataset = bigquery.dataset(datasetId);
+        const table = dataset.table(tableId);
+        const [metadata] = await table.getMetadata();
+        colNames = (metadata.schema?.fields || []).map((f: { name: string }) => f.name.toLowerCase());
+      } catch (e) {
+        console.warn('[Auto-Load] Não foi possível inspecionar schema:', e);
+      }
+
+      const hasResponsavel = colNames.includes('responsavel_nio');
+      const hasPontoFocal = colNames.includes('ponto_focal_financeiro_nio');
+
+      const respCol = hasResponsavel && hasPontoFocal
+        ? 'TRIM(COALESCE(RESPONSAVEL_NIO, PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
+        : hasResponsavel
+        ? 'TRIM(COALESCE(RESPONSAVEL_NIO, "Não informado")) AS RESPONSAVEL_NIO'
+        : hasPontoFocal
+        ? 'TRIM(COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
+        : '"Não informado" AS RESPONSAVEL_NIO';
+
+      const hasN1 = colNames.includes('nio_n1');
+      const hasN2 = colNames.includes('nio_n2');
+      const n1Col = hasN1 ? 'COALESCE(NIO_N1, "Custos & Despesas")' : '"Custos & Despesas"';
+      const n2Col = hasN2 ? 'COALESCE(NIO_N2, "Operacional")' : '"Operacional"';
+
+      const nioQuery = `
+        SELECT
+          TRIM(COALESCE(DIRETORIA_NIO, 'Diretoria Geral')) AS DIRETORIA_NIO,
+          TRIM(COALESCE(AREA_NIO, 'Área Geral')) AS AREA_NIO,
+          ${respCol},
+          TRIM(${n1Col}) AS NIO_N1,
+          TRIM(${n2Col}) AS NIO_N2,
+          TRIM(COALESCE(NIO_N3, 'Item DRE')) AS NIO_N3,
+          TRIM(CAST(anomes AS STRING)) AS anomes,
+          TRIM(CAST(TIPO AS STRING)) AS TIPO,
+          ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor
+        FROM ${fullTable}
+        WHERE DIRETORIA_NIO IS NOT NULL
+          AND AREA_NIO IS NOT NULL
+          AND NIO_N3 IS NOT NULL
+          AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
+        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+        ORDER BY NIO_N1, DIRETORIA_NIO, AREA_NIO, NIO_N3
+      `;
+
+      const corporateQuery = `
+        SELECT
+          '-' AS DIRETORIA_NIO,
+          TRIM(COALESCE(AREA, '-')) AS AREA_NIO,
+          TRIM(COALESCE(NIVEL_4, '-')) AS RESPONSAVEL_NIO,
+          TRIM(COALESCE(NIVEL_3, '-')) AS NIO_N1,
+          TRIM(COALESCE(NIVEL_2, '-')) AS NIO_N2,
+          TRIM(COALESCE(CLASSIFICACAO_FPA, 'Item DRE')) AS NIO_N3,
+          TRIM(CAST(anomes AS STRING)) AS anomes,
+          TRIM(CAST(TIPO AS STRING)) AS TIPO,
+          ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor,
+          CASE
+            WHEN TRIM(NIVEL_2) = 'Tecto' THEN 'tecto'
+            ELSE 'vtal'
+          END AS COMPANY_ID
+        FROM ${fullTable}
+        WHERE TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom', 'Tecto')
+          AND AREA IS NOT NULL
+          AND CLASSIFICACAO_FPA IS NOT NULL
+          AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
+        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 10
+        ORDER BY COMPANY_ID, AREA_NIO, NIO_N3
+      `;
+
+      const runQuery = async (query: string) => {
+        const [job] = await bigquery.createQueryJob({ query, location: 'southamerica-east1' }).catch(() =>
+          bigquery.createQueryJob({ query })
+        );
+        const [rows] = await job.getQueryResults();
+        return rows || [];
+      };
+
+      const [nioRows, corporateRows] = await Promise.all([
+        runQuery(nioQuery),
+        runQuery(corporateQuery),
+      ]);
+
+      const cleanResult = (rows: Record<string, unknown>[]) => rows.map((row: Record<string, unknown>) => {
+        const clean: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (v !== null && typeof v === 'object' && 'value' in v) {
+            clean[k] = (v as { value: unknown }).value;
+          } else if (v instanceof Date) {
+            clean[k] = v.toISOString();
+          } else {
+            clean[k] = v;
+          }
+        }
+        return clean;
+      });
+
+      const cleanNioRows = cleanResult(nioRows as Record<string, unknown>[]);
+      const cleanCorporateRows = cleanResult(corporateRows as Record<string, unknown>[]);
+      const vtalRows = cleanCorporateRows.filter((row) => row.COMPANY_ID === 'vtal');
+      const tectoRows = cleanCorporateRows.filter((row) => row.COMPANY_ID === 'tecto');
+
+      console.log(`[Auto-Load] Sincronização concluída: NIO ${cleanNioRows.length}, V.tal ${vtalRows.length}, Tecto ${tectoRows.length}.`);
+
+      const payload = {
+        success: true,
+        totalRows: cleanNioRows.length + vtalRows.length + tectoRows.length,
+        rows: cleanNioRows,
+        companyRows: {
+          nio: cleanNioRows,
+          vtal: vtalRows,
+          tecto: tectoRows,
+        },
+        projectId,
+        datasetId,
+        tableId,
+        connected: true,
+        serviceAccountEmail: (defaultCredentials as { client_email?: string })?.client_email || null,
+      };
+
+      autoLoadMemoryCache = { timestamp: Date.now(), payload };
+      try {
+        const diskFile = path.join(process.cwd(), 'server', 'bucket_cache', 'bigquery_autoload_cache.json');
+        fs.mkdirSync(path.dirname(diskFile), { recursive: true });
+        fs.writeFileSync(diskFile, JSON.stringify(payload), 'utf-8');
+      } catch {}
+
+      return payload;
+    } finally {
+      autoLoadInFlight = null;
     }
+  })();
 
-    const hasResponsavel = colNames.includes('responsavel_nio');
-    const hasPontoFocal = colNames.includes('ponto_focal_financeiro_nio');
+  return autoLoadInFlight;
+}
 
-    const respCol = hasResponsavel && hasPontoFocal
-      ? 'TRIM(COALESCE(RESPONSAVEL_NIO, PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-      : hasResponsavel
-      ? 'TRIM(COALESCE(RESPONSAVEL_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-      : hasPontoFocal
-      ? 'TRIM(COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-      : '"Não informado" AS RESPONSAVEL_NIO';
+app.get('/api/gcp/auto-load', async (req: Request, res: Response) => {
+  const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
 
-    const hasN1 = colNames.includes('nio_n1');
-    const hasN2 = colNames.includes('nio_n2');
-    const n1Col = hasN1 ? 'COALESCE(NIO_N1, "Custos & Despesas")' : '"Custos & Despesas"';
-    const n2Col = hasN2 ? 'COALESCE(NIO_N2, "Operacional")' : '"Operacional"';
+  if (!forceRefresh && autoLoadMemoryCache) {
+    const age = Date.now() - autoLoadMemoryCache.timestamp;
+    if (age > AUTO_LOAD_TTL_MS) {
+      fetchBigQueryAutoLoadData().catch(() => {});
+    }
+    return res.json(autoLoadMemoryCache.payload);
+  }
 
-    const nioQuery = `
-      SELECT
-        TRIM(COALESCE(DIRETORIA_NIO, 'Diretoria Geral')) AS DIRETORIA_NIO,
-        TRIM(COALESCE(AREA_NIO, 'Área Geral')) AS AREA_NIO,
-        ${respCol},
-        TRIM(${n1Col}) AS NIO_N1,
-        TRIM(${n2Col}) AS NIO_N2,
-        TRIM(COALESCE(NIO_N3, 'Item DRE')) AS NIO_N3,
-        TRIM(CAST(anomes AS STRING)) AS anomes,
-        TRIM(CAST(TIPO AS STRING)) AS TIPO,
-        ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor
-      FROM ${fullTable}
-      WHERE DIRETORIA_NIO IS NOT NULL
-        AND AREA_NIO IS NOT NULL
-        AND NIO_N3 IS NOT NULL
-        AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
-      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
-      ORDER BY NIO_N1, DIRETORIA_NIO, AREA_NIO, NIO_N3
-    `;
-
-    const corporateQuery = `
-      SELECT
-        '-' AS DIRETORIA_NIO,
-        TRIM(COALESCE(AREA, '-')) AS AREA_NIO,
-        TRIM(COALESCE(NIVEL_4, '-')) AS RESPONSAVEL_NIO,
-        TRIM(COALESCE(NIVEL_3, '-')) AS NIO_N1,
-        TRIM(COALESCE(NIVEL_2, '-')) AS NIO_N2,
-        TRIM(COALESCE(CLASSIFICACAO_FPA, 'Item DRE')) AS NIO_N3,
-        TRIM(CAST(anomes AS STRING)) AS anomes,
-        TRIM(CAST(TIPO AS STRING)) AS TIPO,
-        ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor,
-        CASE
-          WHEN TRIM(NIVEL_2) = 'Tecto' THEN 'tecto'
-          ELSE 'vtal'
-        END AS COMPANY_ID
-      FROM ${fullTable}
-      WHERE TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom', 'Tecto')
-        AND AREA IS NOT NULL
-        AND CLASSIFICACAO_FPA IS NOT NULL
-        AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
-      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 10
-      ORDER BY COMPANY_ID, AREA_NIO, NIO_N3
-    `;
-
-    const runQuery = async (query: string) => {
-      const [job] = await bigquery.createQueryJob({ query, location: 'southamerica-east1' }).catch(() =>
-        bigquery.createQueryJob({ query })
-      );
-      const [rows] = await job.getQueryResults();
-      return rows || [];
-    };
-
-    const [nioRows, corporateRows] = await Promise.all([
-      runQuery(nioQuery),
-      runQuery(corporateQuery),
-    ]);
-
-    const cleanResult = (rows: Record<string, unknown>[]) => rows.map((row: Record<string, unknown>) => {
-      const clean: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(row)) {
-        if (v !== null && typeof v === 'object' && 'value' in v) {
-          clean[k] = (v as { value: unknown }).value;
-        } else if (v instanceof Date) {
-          clean[k] = v.toISOString();
-        } else {
-          clean[k] = v;
+  if (!forceRefresh && !autoLoadMemoryCache) {
+    try {
+      const diskFile = path.join(process.cwd(), 'server', 'bucket_cache', 'bigquery_autoload_cache.json');
+      if (fs.existsSync(diskFile)) {
+        const cachedPayload = JSON.parse(fs.readFileSync(diskFile, 'utf-8'));
+        if (cachedPayload && cachedPayload.success && cachedPayload.companyRows) {
+          autoLoadMemoryCache = { timestamp: Date.now() - (AUTO_LOAD_TTL_MS / 2), payload: cachedPayload };
+          fetchBigQueryAutoLoadData().catch(() => {});
+          return res.json(cachedPayload);
         }
       }
-      return clean;
-    });
+    } catch {}
+  }
 
-    const cleanNioRows = cleanResult(nioRows as Record<string, unknown>[]);
-    const cleanCorporateRows = cleanResult(corporateRows as Record<string, unknown>[]);
-    const vtalRows = cleanCorporateRows.filter((row) => row.COMPANY_ID === 'vtal');
-    const tectoRows = cleanCorporateRows.filter((row) => row.COMPANY_ID === 'tecto');
-
-    console.log(`[Auto-Load] Sincronização concluída: NIO ${cleanNioRows.length}, V.tal ${vtalRows.length}, Tecto ${tectoRows.length}.`);
-
-    return res.json({
-      success: true,
-      totalRows: cleanNioRows.length + vtalRows.length + tectoRows.length,
-      rows: cleanNioRows,
-      companyRows: {
-        nio: cleanNioRows,
-        vtal: vtalRows,
-        tecto: tectoRows,
-      },
-      projectId,
-      datasetId,
-      tableId,
-      connected: true,
-      serviceAccountEmail: (defaultCredentials as { client_email?: string })?.client_email || null,
-    });
+  try {
+    const payload = await fetchBigQueryAutoLoadData();
+    return res.json(payload);
   } catch (error: unknown) {
     const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
     console.error('[Auto-Load] Erro ao carregar base inicial:', error);
@@ -828,8 +882,6 @@ const flattenJustificationSnapshot = (
     }
   }
 
-  // Mantém o snapshot mesmo quando todas as justificativas forem apagadas.
-  // A view usa este registro para não ressuscitar impactos de versões antigas.
   if (rows.length === 0) {
     rows.push({
       SNAPSHOT_ID: snapshotId,
@@ -912,6 +964,111 @@ const buildRowStoragePath = (companyId: string, row: Record<string, unknown>) =>
   return `justificativas/${company}/${classification}/${rowHash}.json`;
 };
 
+// Cache em memória + disco para justificativas de cada empresa (evita baixar 180+ arquivos a cada troca de mês/empresa)
+interface CompanyJustificationsCacheItem {
+  loadedAt: number;
+  entriesByPath: Record<string, Record<string, unknown>>;
+}
+
+const companyJustificationsMemoryCache = new Map<string, CompanyJustificationsCacheItem>();
+const companyJustificationsInFlight = new Map<string, Promise<CompanyJustificationsCacheItem>>();
+const JUSTIFICATIONS_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutos
+
+const getCompanyEntriesDiskCachePath = (companyId: string) =>
+  path.join(bucketCacheDir, `company_entries_v2_${safeObjectSegment(companyId, 'nio')}.json`);
+
+const saveCompanyEntriesToDisk = (companyId: string, item: CompanyJustificationsCacheItem) => {
+  try {
+    fs.writeFileSync(getCompanyEntriesDiskCachePath(companyId), JSON.stringify(item), 'utf-8');
+  } catch (err) {
+    console.warn('[Justificativas Cache] Falha ao gravar cache em disco:', err);
+  }
+};
+
+const loadCompanyEntriesFromDisk = (companyId: string): CompanyJustificationsCacheItem | null => {
+  try {
+    const diskPath = getCompanyEntriesDiskCachePath(companyId);
+    if (fs.existsSync(diskPath)) {
+      const parsed = JSON.parse(fs.readFileSync(diskPath, 'utf-8')) as CompanyJustificationsCacheItem;
+      if (parsed && parsed.entriesByPath && typeof parsed.entriesByPath === 'object') {
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+};
+
+async function syncCompanyEntriesFromGcs(companyId: string): Promise<CompanyJustificationsCacheItem> {
+  const cleanCompany = safeObjectSegment(companyId, 'nio');
+  const existingPromise = companyJustificationsInFlight.get(cleanCompany);
+  if (existingPromise) return existingPromise;
+
+  const syncPromise = (async () => {
+    try {
+      const bucketName = sharedJustificationsBucket();
+      const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
+      const [files] = await storage.bucket(bucketName).getFiles({ prefix: `justificativas/${cleanCompany}/` });
+      const entriesByPath: Record<string, Record<string, unknown>> = {};
+
+      // Concorrência de 25 para baixar todos os JSONs ~5x mais rápido sem estourar conexões
+      const BATCH_SIZE = 25;
+      for (let index = 0; index < files.length; index += BATCH_SIZE) {
+        await Promise.all(
+          files.slice(index, index + BATCH_SIZE).map(async (file) => {
+            try {
+              const [contents] = await file.download();
+              const parsed = JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
+              if (parsed && typeof parsed === 'object') {
+                entriesByPath[file.name] = parsed;
+              }
+            } catch {
+              // Ignora arquivos inválidos
+            }
+          })
+        );
+      }
+
+      const cacheItem: CompanyJustificationsCacheItem = {
+        loadedAt: Date.now(),
+        entriesByPath,
+      };
+      companyJustificationsMemoryCache.set(cleanCompany, cacheItem);
+      saveCompanyEntriesToDisk(cleanCompany, cacheItem);
+      console.log(`[Justificativas Cache] ${cleanCompany.toUpperCase()}: ${Object.keys(entriesByPath).length} arquivos sincronizados.`);
+      return cacheItem;
+    } finally {
+      companyJustificationsInFlight.delete(cleanCompany);
+    }
+  })();
+
+  companyJustificationsInFlight.set(cleanCompany, syncPromise);
+  return syncPromise;
+}
+
+async function getCompanyEntriesFast(companyId: string, forceRefresh = false): Promise<CompanyJustificationsCacheItem> {
+  const cleanCompany = safeObjectSegment(companyId, 'nio');
+
+  if (!forceRefresh) {
+    const mem = companyJustificationsMemoryCache.get(cleanCompany);
+    if (mem) {
+      if (Date.now() - mem.loadedAt > JUSTIFICATIONS_CACHE_TTL_MS) {
+        syncCompanyEntriesFromGcs(cleanCompany).catch(() => {});
+      }
+      return mem;
+    }
+
+    const disk = loadCompanyEntriesFromDisk(cleanCompany);
+    if (disk && Object.keys(disk.entriesByPath).length > 0) {
+      companyJustificationsMemoryCache.set(cleanCompany, disk);
+      // Atualiza em background para manter sempre fresco
+      syncCompanyEntriesFromGcs(cleanCompany).catch(() => {});
+      return disk;
+    }
+  }
+
+  return syncCompanyEntriesFromGcs(cleanCompany);
+}
+
 // Salva uma linha em um único JSON acumulado. Cada mês ocupa uma chave em `periods`.
 // A condição de geração impede que duas gravações concorrentes apaguem alterações.
 app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response) => {
@@ -921,8 +1078,9 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
       return res.status(400).json({ success: false, message: 'Linha, mês e justificativas são obrigatórios.' });
     }
 
+    const cleanCompany = safeObjectSegment(companyId, 'nio');
     const bucketName = sharedJustificationsBucket();
-    const objectPath = buildRowStoragePath(companyId, row);
+    const objectPath = buildRowStoragePath(cleanCompany, row);
     const updatedAt = new Date().toISOString();
     const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
     const file = storage.bucket(bucketName).file(objectPath);
@@ -953,7 +1111,7 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
 
         const payload = {
           schemaVersion: 2,
-          companyId,
+          companyId: cleanCompany,
           rowId: row.id,
           classification: row.n3,
           row: {
@@ -976,15 +1134,27 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
           preconditionOpts: { ifGenerationMatch: generation },
           metadata: {
             cacheControl: 'no-store',
-            metadata: { companyId, rowId: String(row.id), updatedAt },
+            metadata: { companyId: cleanCompany, rowId: String(row.id), updatedAt },
           },
         });
+
+        // Atualiza imediatamente o cache em memória e em disco
+        const mem = companyJustificationsMemoryCache.get(cleanCompany) || loadCompanyEntriesFromDisk(cleanCompany) || {
+          loadedAt: Date.now(),
+          entriesByPath: {},
+        };
+        mem.entriesByPath[objectPath] = payload;
+        mem.loadedAt = Date.now();
+        companyJustificationsMemoryCache.set(cleanCompany, mem);
+        saveCompanyEntriesToDisk(cleanCompany, mem);
+
         const syncedRows = await syncJustificationSnapshotToBigQuery(
-          companyId,
+          cleanCompany,
           objectPath,
           payload,
           period,
         );
+
         return res.json({
           success: true,
           bucket: bucketName,
@@ -1011,49 +1181,249 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
   }
 });
 
-// Carrega todas as linhas persistidas de uma empresa e devolve o mesmo mapa usado pela tela.
+const normalizeReportPeriod = (value: unknown) => {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})[\/-](\d{1,2})$/);
+  if (!match) return null;
+  const month = Number(match[2]);
+  return month >= 1 && month <= 12 ? `${match[1]}/${month}` : null;
+};
+
+const parsePeriodSortKey = (value: unknown): number => {
+  const norm = normalizeReportPeriod(value);
+  if (!norm) return 0;
+  const [y, m] = norm.split('/').map(Number);
+  return (y || 0) * 100 + (m || 0);
+};
+
+interface StoredImpactItem {
+  id?: string;
+  name?: string;
+  value?: number;
+  justification?: string;
+}
+
+interface StoredPeriodJustifications {
+  momImpacts?: StoredImpactItem[];
+  vsOrcadoImpacts?: StoredImpactItem[];
+  ytdImpacts?: StoredImpactItem[];
+}
+
+const hasMeaningfulJustificationText = (impacts: unknown): boolean => {
+  if (!Array.isArray(impacts) || impacts.length === 0) return false;
+  return impacts.some((item) => {
+    const text = String((item as StoredImpactItem)?.justification || '').trim();
+    return text.length > 0 && text !== '0';
+  });
+};
+
+const cleanHistoricalImpactsList = (impacts: StoredImpactItem[]): StoredImpactItem[] => {
+  if (!Array.isArray(impacts)) return [];
+  const withText = impacts.filter((item) => {
+    const text = String(item?.justification || '').trim();
+    return text.length > 0 && text !== '0';
+  });
+  return (withText.length > 0 ? withText : impacts).map((item) => ({ ...item }));
+};
+
+/**
+ * Resolve as justificativas de uma linha para um determinado período (ex: 2026/9):
+ * - Se o período já possuir justificativas próprias preenchidas pelo usuário, usa-as.
+ * - Caso contrário (ex: mês 9 ainda não preenchido), traz como referência histórica o último
+ *   comentário disponível até o mês selecionado (priorizando 2026/8, depois 2026/7, 2026/6, etc.)
+ *   tanto para "Mês vs Orçado" (vsOrcadoImpacts) quanto para "YTD vs Orçado" (ytdImpacts).
+ * - "MoM (vs Mês Anterior)" (momImpacts) permanece vazio ([]) quando o mês ainda não foi preenchido.
+ */
+function resolveEntryForPeriod(
+  entry: Record<string, unknown>,
+  requestedPeriod: string
+): StoredPeriodJustifications | null {
+  const targetNorm = normalizeReportPeriod(requestedPeriod) || requestedPeriod || '2026/8';
+  const targetOrder = parsePeriodSortKey(targetNorm);
+
+  const rawPeriods = entry.periods && typeof entry.periods === 'object'
+    ? (entry.periods as Record<string, unknown>)
+    : {};
+
+  const normalizedPeriods: Record<string, StoredPeriodJustifications> = {};
+  for (const [k, v] of Object.entries(rawPeriods)) {
+    if (v && typeof v === 'object') {
+      const normK = normalizeReportPeriod(k) || k;
+      normalizedPeriods[normK] = v as StoredPeriodJustifications;
+    }
+  }
+  if (entry.justifications && typeof entry.justifications === 'object' && entry.period) {
+    const normK = normalizeReportPeriod(entry.period) || String(entry.period);
+    if (!normalizedPeriods[normK]) {
+      normalizedPeriods[normK] = entry.justifications as StoredPeriodJustifications;
+    }
+  }
+
+  const allPeriodKeys = Object.keys(normalizedPeriods);
+  if (allPeriodKeys.length === 0) return null;
+
+  // Ordena todos os períodos <= targetNorm do mais recente para o mais antigo (ex: 2026/9, 2026/8, 2026/7, 2026/6, 2026/5)
+  const candidatePeriods = allPeriodKeys
+    .filter((p) => {
+      const order = parsePeriodSortKey(p);
+      return targetOrder === 0 || (order > 0 && order <= targetOrder);
+    })
+    .sort((a, b) => parsePeriodSortKey(b) - parsePeriodSortKey(a));
+
+  if (candidatePeriods.length === 0) return null;
+
+  const exact = normalizedPeriods[targetNorm];
+
+  // 1. MoM (vs Mês Anterior): exclusivo do mês selecionado. Se não houver no próprio mês, fica vazio ([]).
+  const momImpacts: StoredImpactItem[] =
+    exact && Array.isArray(exact.momImpacts)
+      ? exact.momImpacts.map((item) => ({ ...item }))
+      : [];
+
+  // 2. Mês vs Orçado (vsOrcadoImpacts):
+  // Se o próprio mês já tem texto de justificativa (ou item editado manualmente pelo usuário), usa o próprio mês.
+  // Caso contrário, busca no histórico (do mês mais recente <= targetNorm, começando por 2026/8) o último comentário escrito.
+  let vsOrcadoImpacts: StoredImpactItem[] = [];
+  const exactOrc = exact && Array.isArray(exact.vsOrcadoImpacts) ? exact.vsOrcadoImpacts : [];
+  const exactOrcHasUserItem = exactOrc.some((i) => !String(i?.id || '').startsWith('historico-'));
+
+  if (hasMeaningfulJustificationText(exactOrc) || exactOrcHasUserItem) {
+    vsOrcadoImpacts = cleanHistoricalImpactsList(exactOrc);
+  } else {
+    let historicalOrc: StoredImpactItem[] | null = null;
+    for (const pKey of candidatePeriods) {
+      const pOrc = normalizedPeriods[pKey]?.vsOrcadoImpacts;
+      if (hasMeaningfulJustificationText(pOrc)) {
+        historicalOrc = cleanHistoricalImpactsList(pOrc!);
+        break;
+      }
+    }
+    if (historicalOrc && historicalOrc.length > 0) {
+      // Se o mês exato (ex: 2026/8 na Tecto) tinha apenas 1 impacto residual sem texto para fechar o delta do mês 8,
+      // preserva o valor conciliado do mês exato e aplica o comentário histórico mais recente.
+      if (
+        exactOrc.length === 1 &&
+        String(exactOrc[0]?.id || '').startsWith('historico-residual-') &&
+        historicalOrc.length === 1
+      ) {
+        vsOrcadoImpacts = [
+          {
+            ...historicalOrc[0],
+            value: exactOrc[0].value,
+          },
+        ];
+      } else {
+        vsOrcadoImpacts = historicalOrc;
+      }
+    } else {
+      vsOrcadoImpacts = exactOrc.map((item) => ({ ...item }));
+    }
+  }
+
+  // 3. YTD vs Orçado (ytdImpacts):
+  // Se o próprio mês já tem texto de justificativa YTD (ou item editado pelo usuário), usa o próprio mês.
+  // Caso contrário, traz o último YTD preenchido (ex: "Resumo histórico até 2026/8").
+  let ytdImpacts: StoredImpactItem[] = [];
+  const exactYtd = exact && Array.isArray(exact.ytdImpacts) ? exact.ytdImpacts : [];
+  const exactYtdHasUserItem = exactYtd.some((i) => !String(i?.id || '').startsWith('historico-'));
+
+  if (hasMeaningfulJustificationText(exactYtd) || exactYtdHasUserItem) {
+    ytdImpacts = cleanHistoricalImpactsList(exactYtd);
+  } else {
+    let historicalYtd: StoredImpactItem[] | null = null;
+    for (const pKey of candidatePeriods) {
+      const pYtd = normalizedPeriods[pKey]?.ytdImpacts;
+      if (hasMeaningfulJustificationText(pYtd)) {
+        historicalYtd = cleanHistoricalImpactsList(pYtd!);
+        break;
+      }
+    }
+    if (historicalYtd && historicalYtd.length > 0) {
+      ytdImpacts = historicalYtd;
+    } else {
+      ytdImpacts = exactYtd.map((item) => ({ ...item }));
+    }
+  }
+
+  if (momImpacts.length === 0 && vsOrcadoImpacts.length === 0 && ytdImpacts.length === 0) {
+    return null;
+  }
+
+  return {
+    momImpacts,
+    vsOrcadoImpacts,
+    ytdImpacts,
+  };
+}
+
+// Carrega todas as linhas persistidas de uma empresa e devolve o mesmo mapa usado pela tela + todos os períodos.
 app.get('/api/gcp/justifications/load-company', async (req: Request, res: Response) => {
   try {
     const companyId = safeObjectSegment(req.query.companyId || 'nio', 'nio');
-    const period = String(req.query.period || '');
+    const period = normalizeReportPeriod(req.query.period) || String(req.query.period || '2026/8');
+    const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
     const bucketName = sharedJustificationsBucket();
-    const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
-    const [files] = await storage.bucket(bucketName).getFiles({ prefix: `justificativas/${companyId}/` });
-    const entries: Array<Record<string, unknown> | null> = [];
-    // O cliente do GCS compartilha streams HTTP. Limitar a concorrência evita
-    // MaxListenersExceededWarning quando a empresa possui muitos arquivos.
-    for (let index = 0; index < files.length; index += 5) {
-      const batch = await Promise.all(files.slice(index, index + 5).map(async (file) => {
-        try {
-          const [contents] = await file.download();
-          return JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
-        } catch {
-          return null;
-        }
-      }));
-      entries.push(...batch);
+
+    const cacheItem = await getCompanyEntriesFast(companyId, forceRefresh);
+    const entries = Object.values(cacheItem.entriesByPath);
+
+    const targetPeriodsSet = new Set<string>([
+      '2026/5',
+      '2026/6',
+      '2026/7',
+      '2026/8',
+      '2026/9',
+      '2026/10',
+      '2026/11',
+      '2026/12',
+    ]);
+    if (period) targetPeriodsSet.add(period);
+
+    const allPeriods: Record<string, Record<string, unknown>> = {};
+    const allLookupKeys: Record<string, Record<string, unknown>> = {};
+
+    for (const pKey of targetPeriodsSet) {
+      allPeriods[pKey] = {};
+      allLookupKeys[pKey] = {};
     }
 
-    const justifications: Record<string, unknown> = {};
     for (const entry of entries) {
       if (!entry?.rowId) continue;
-      const periods = entry.periods && typeof entry.periods === 'object'
-        ? entry.periods as Record<string, unknown>
-        : {};
-      const selected = period ? periods[period] : undefined;
-      if (selected) {
-        justifications[String(entry.rowId)] = selected;
-      } else if (entry.justifications && (!period || entry.period === period)) {
-        justifications[String(entry.rowId)] = entry.justifications;
+      const rowIdStr = String(entry.rowId);
+      const rMeta = entry.row as Record<string, unknown> | undefined;
+      const dir = rMeta ? String(rMeta.diretoria || '').trim().toLowerCase() : '';
+      const area = rMeta ? String(rMeta.area || '').trim().toLowerCase() : '';
+      const n2 = rMeta ? String(rMeta.nivel2 || '').trim().toLowerCase() : '';
+      const n3 = String((rMeta && rMeta.n3) || entry.classification || '').trim().toLowerCase();
+
+      for (const pKey of targetPeriodsSet) {
+        const resolved = resolveEntryForPeriod(entry, pKey);
+        if (!resolved) continue;
+        allPeriods[pKey][rowIdStr] = resolved;
+        if (n3) {
+          if (n2) {
+            allLookupKeys[pKey][`${dir}|${area}|${n2}|${n3}`] = resolved;
+            allLookupKeys[pKey][`${area}|${n2}|${n3}`] = resolved;
+          }
+          allLookupKeys[pKey][`${dir}|${area}|${n3}`] = resolved;
+          allLookupKeys[pKey][`${area}|${n3}`] = resolved;
+        }
       }
     }
+
+    const justifications = allPeriods[period] || {};
+    const byLookupKey = allLookupKeys[period] || {};
 
     return res.json({
       success: true,
       source: 'gcp_bucket',
       bucket: bucketName,
+      totalFiles: entries.length,
       totalRows: Object.keys(justifications).length,
       justifications,
+      allPeriods,
+      byLookupKey,
+      allLookupKeys,
     });
   } catch (error: unknown) {
     console.error('[Justificativas] Falha ao carregar empresa do Bucket:', error);
@@ -1063,14 +1433,6 @@ app.get('/api/gcp/justifications/load-company', async (req: Request, res: Respon
     });
   }
 });
-
-const normalizeReportPeriod = (value: unknown) => {
-  const text = String(value || '').trim();
-  const match = text.match(/^(\d{4})[\/-](\d{1,2})$/);
-  if (!match) return null;
-  const month = Number(match[2]);
-  return month >= 1 && month <= 12 ? `${match[1]}/${month}` : null;
-};
 
 const stableReportRowId = (parts: string[]) => {
   let hash = 2166136261;
@@ -1090,23 +1452,14 @@ const reportValueKind = (value: unknown) => {
 };
 
 async function loadReportJustifications(companyId: ReportCompanyId, period: string) {
-  const storage = getStorageClient({ projectId: process.env.GCP_PROJECT_ID || 'vtal-fpea-prd' });
-  const [files] = await storage.bucket(sharedJustificationsBucket()).getFiles({ prefix: `justificativas/${companyId}/` });
+  const cacheItem = await getCompanyEntriesFast(companyId, false);
   const result: Record<string, Record<string, unknown>> = {};
-  for (let index = 0; index < files.length; index += 5) {
-    await Promise.all(files.slice(index, index + 5).map(async (file) => {
-      try {
-        const [contents] = await file.download();
-        const entry = JSON.parse(contents.toString('utf-8')) as Record<string, unknown>;
-        if (!entry.rowId) return;
-        const periods = entry.periods && typeof entry.periods === 'object'
-          ? entry.periods as Record<string, Record<string, unknown>> : {};
-        const selected = periods[period] || ((!entry.period || entry.period === period) ? entry.justifications : undefined);
-        if (selected && typeof selected === 'object') result[String(entry.rowId)] = selected as Record<string, unknown>;
-      } catch (error) {
-        console.warn(`[Word] Justificativa ignorada em ${file.name}:`, error);
-      }
-    }));
+  for (const entry of Object.values(cacheItem.entriesByPath)) {
+    if (!entry?.rowId) continue;
+    const resolved = resolveEntryForPeriod(entry, period);
+    if (resolved) {
+      result[String(entry.rowId)] = resolved as unknown as Record<string, unknown>;
+    }
   }
   return result;
 }
@@ -1541,6 +1894,13 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[NIO Fibra DRE Server] Rodando na porta ${PORT} (${isProd ? 'produção' : 'desenvolvimento'})`);
+    // Pré-aquece o cache do BigQuery e das justificativas históricas do GCS em background
+    setTimeout(() => {
+      fetchBigQueryAutoLoadData().catch((err) => console.warn('[Pre-warm BigQuery]', err));
+      (['nio', 'vtal', 'tecto'] as const).forEach((cid) => {
+        getCompanyEntriesFast(cid, false).catch((err) => console.warn(`[Pre-warm GCS ${cid}]`, err));
+      });
+    }, 150);
   });
 }
 

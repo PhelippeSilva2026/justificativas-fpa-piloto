@@ -16,7 +16,24 @@ import { ImpactsSection } from './components/ImpactsSection';
 import { WaterfallRow } from './components/WaterfallRow';
 import { SlidePreview } from './components/SlidePreview';
 import { GcpConnectionModal } from './components/GcpConnectionModal';
-import { CheckCircle, AlertCircle, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { CheckCircle, AlertCircle, ChevronLeft, ChevronRight, Loader2, RefreshCw, Database } from 'lucide-react';
+
+const FAKE_LEGACY_IDS = new Set([
+  'dre-1', 'dre-2', 'dre-3', 'dre-4', 'dre-5', 'dre-6', 'dre-7', 'dre-8',
+  'VTAL_SUBMARINO_O&M', 'VTAL_DWDM_TRANSPORTE', 'VTAL_ENERGIA_CLS', 'VTAL_DIREITO_PASSAGEM',
+  'TECTO_ENERGIA_MERCADO_LIVRE', 'TECTO_CHILLERS_CLIMATIZACAO', 'TECTO_CROSS_CONNECTS', 'TECTO_MANUTENCAO_UPS_GERADORES',
+]);
+
+function cleanFakeJustifications(map: Record<string, RowJustifications> | null | undefined): Record<string, RowJustifications> {
+  if (!map || typeof map !== 'object') return {};
+  const cleaned: Record<string, RowJustifications> = {};
+  for (const [k, v] of Object.entries(map)) {
+    if (!FAKE_LEGACY_IDS.has(k) && v && typeof v === 'object') {
+      cleaned[k] = v;
+    }
+  }
+  return cleaned;
+}
 
 export default function App() {
   // Controle de Empresa / Tela Inicial: null exibe o Portal Corporativo de Entrada
@@ -46,42 +63,64 @@ export default function App() {
   const [selectedArea, setSelectedArea] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'COMPLETED' | 'PENDING'>('ALL');
 
-  const [selectedRowId, setSelectedRowId] = useState<string>(() => {
-    const initialCid = (localStorage.getItem('corp_active_company') as CompanyId) || 'nio';
-    return getCompanyWorkbook(initialCid).rows[0]?.id || '';
-  });
+  const [selectedRowId, setSelectedRowId] = useState<string>('');
 
-  const [justificationsMap, setJustificationsMap] = useState<Record<string, RowJustifications>>(() => {
-    const initialCid: CompanyId = (localStorage.getItem('corp_active_company') as CompanyId) || 'nio';
-    const storageKey = COMPANIES[initialCid]?.storageKey || 'nio_justifications_v1';
+  const [justificationsMap, setJustificationsMap] = useState<Record<string, RowJustifications>>({});
+  const [justificationsLookupMap, setJustificationsLookupMap] = useState<Record<string, RowJustifications>>({});
+  const [isLoadingJustifications, setIsLoadingJustifications] = useState<boolean>(false);
+
+  // Cache em memória de todos os períodos por empresa para troca instantânea (0ms)
+  const companyPeriodsCacheRef = useRef<Record<string, Record<string, Record<string, RowJustifications>>>>({});
+  const companyLookupCacheRef = useRef<Record<string, Record<string, RowJustifications>>>({});
+
+  // Limpa chaves antigas do localStorage (v1/v2) para evitar que caches antigos sobrescrevam o Bucket
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-          return parsed;
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('_justifications_v1') || key.includes('_justifications_v2'))) {
+          keysToRemove.push(key);
         }
       }
-    } catch {
-      // Fallback
-    }
-    return {};
-  });
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch {}
+  }, []);
 
-  // Salva automaticamente qualquer alteração de justificativas no armazenamento da empresa ativa
-  useEffect(() => {
-    if (!activeCompany) return;
-    const storageKey = `${COMPANIES[activeCompany]?.storageKey || 'nio_justifications_v1'}_${selectedPeriod.replace('/', '_')}`;
+  const getPeriodStorageKey = (cid: CompanyId, period: string) =>
+    `${COMPANIES[cid]?.storageKey || 'nio_justifications'}_v3_${period.replace('/', '_')}`;
+
+  const saveLocalJustifications = (
+    cid: CompanyId,
+    period: string,
+    mapToSave: Record<string, RowJustifications>
+  ) => {
+    const cleaned = cleanFakeJustifications(mapToSave);
+    if (Object.keys(cleaned).length === 0) return;
+    const storageKey = getPeriodStorageKey(cid, period);
     try {
-      localStorage.setItem(storageKey, JSON.stringify(justificationsMap));
+      localStorage.setItem(storageKey, JSON.stringify(cleaned));
     } catch (e) {
       console.warn('Erro ao salvar justificativas no localStorage:', e);
     }
-  }, [justificationsMap, activeCompany, selectedPeriod]);
+  };
+
+  const readLocalJustifications = (cid: CompanyId, period: string): Record<string, RowJustifications> => {
+    const storageKey = getPeriodStorageKey(cid, period);
+    try {
+      const local = localStorage.getItem(storageKey);
+      if (local) {
+        return cleanFakeJustifications(JSON.parse(local));
+      }
+    } catch {}
+    return {};
+  };
+
   const [activeView, setActiveView] = useState<'dashboard' | 'presentation'>('dashboard');
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isGcpModalOpen, setIsGcpModalOpen] = useState<boolean>(false);
   const [isAutoLoadingGcp, setIsAutoLoadingGcp] = useState<boolean>(true);
+  const [gcpLoadError, setGcpLoadError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(
     null
   );
@@ -95,34 +134,91 @@ export default function App() {
     }, 4500);
   };
 
-  // Ao entrar em uma empresa, carrega as justificativas compartilhadas do Bucket.
-  useEffect(() => {
-    if (!activeCompany) return;
-    const localKey = `${COMPANIES[activeCompany].storageKey}_${selectedPeriod.replace('/', '_')}`;
-    try {
-      const local = localStorage.getItem(localKey);
-      setJustificationsMap(local ? JSON.parse(local) : {});
-    } catch {
+  // Função dedicada para carregar justificativas de uma empresa/período com cache instantâneo
+  const fetchCompanyJustifications = async (
+    cid: CompanyId,
+    period: string,
+    options?: { forceRefresh?: boolean; signal?: AbortSignal }
+  ) => {
+    const localData = readLocalJustifications(cid, period);
+    const cachedPeriodData = companyPeriodsCacheRef.current[cid]?.[period];
+
+    if (cachedPeriodData && !options?.forceRefresh) {
+      const merged = { ...localData, ...cachedPeriodData };
+      setJustificationsMap(merged);
+      setJustificationsLookupMap(companyLookupCacheRef.current[`${cid}:${period}`] || {});
+    } else if (Object.keys(localData).length > 0) {
+      setJustificationsMap(localData);
+    } else {
       setJustificationsMap({});
     }
+
+    setIsLoadingJustifications(true);
+    try {
+      const url = `/api/gcp/justifications/load-company?companyId=${cid}&period=${encodeURIComponent(period)}${
+        options?.forceRefresh ? '&refresh=1' : ''
+      }`;
+      const resp = await fetch(url, { signal: options?.signal });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      if (data.success) {
+        if (data.allPeriods && typeof data.allPeriods === 'object') {
+          const cleanedAll: Record<string, Record<string, RowJustifications>> = {};
+          for (const [pKey, pMap] of Object.entries(data.allPeriods)) {
+            cleanedAll[pKey] = cleanFakeJustifications(pMap as Record<string, RowJustifications>);
+          }
+          companyPeriodsCacheRef.current[cid] = {
+            ...(companyPeriodsCacheRef.current[cid] || {}),
+            ...cleanedAll,
+          };
+        }
+
+        if (data.allLookupKeys && typeof data.allLookupKeys === 'object') {
+          for (const [pKey, lMap] of Object.entries(data.allLookupKeys)) {
+            if (lMap && typeof lMap === 'object') {
+              companyLookupCacheRef.current[`${cid}:${pKey}`] = lMap as Record<string, RowJustifications>;
+            }
+          }
+        }
+
+        const serverPeriodMap = cleanFakeJustifications(
+          data.justifications || companyPeriodsCacheRef.current[cid]?.[period] || {}
+        );
+        if (!companyPeriodsCacheRef.current[cid]) {
+          companyPeriodsCacheRef.current[cid] = {};
+        }
+        companyPeriodsCacheRef.current[cid][period] = serverPeriodMap;
+
+        const lookup = (data.byLookupKey && typeof data.byLookupKey === 'object')
+          ? (data.byLookupKey as Record<string, RowJustifications>)
+          : (companyLookupCacheRef.current[`${cid}:${period}`] || {});
+        companyLookupCacheRef.current[`${cid}:${period}`] = lookup;
+
+        const freshLocal = readLocalJustifications(cid, period);
+        const merged = { ...freshLocal, ...serverPeriodMap };
+        setJustificationsMap(merged);
+        setJustificationsLookupMap(lookup);
+        if (Object.keys(merged).length > 0) {
+          saveLocalJustifications(cid, period, merged);
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.warn('Não foi possível carregar justificativas compartilhadas:', error);
+      }
+    } finally {
+      if (!options?.signal?.aborted) {
+        setIsLoadingJustifications(false);
+      }
+    }
+  };
+
+  // Ao entrar em uma empresa ou trocar período, carrega as justificativas compartilhadas do Bucket.
+  useEffect(() => {
+    if (!activeCompany) return;
     const controller = new AbortController();
-
-    fetch(`/api/gcp/justifications/load-company?companyId=${activeCompany}&period=${encodeURIComponent(selectedPeriod)}`, { signal: controller.signal })
-      .then(async (resp) => {
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return resp.json();
-      })
-      .then((data) => {
-        if (data.success && data.justifications) {
-          setJustificationsMap((local) => ({ ...local, ...data.justifications }));
-        }
-      })
-      .catch((error) => {
-        if (error instanceof Error && error.name !== 'AbortError') {
-          console.warn('Não foi possível carregar justificativas compartilhadas:', error);
-        }
-      });
-
+    fetchCompanyJustifications(activeCompany, selectedPeriod, { signal: controller.signal });
     return () => controller.abort();
   }, [activeCompany, selectedPeriod]);
 
@@ -130,32 +226,57 @@ export default function App() {
     Object.values(saveTimersRef.current).forEach(clearTimeout);
   }, []);
 
-  // Carregamento automático e 100% conectado com o BigQuery no boot do aplicativo
-  useEffect(() => {
-    let isCancelled = false;
-
-    async function autoLoadBigQuery() {
-      try {
-        const resp = await fetch('/api/gcp/auto-load');
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
-        }
-        const data = await resp.json();
-        if (isCancelled) return;
-
-        if (data.success && data.companyRows) {
-          const loaded: Partial<Record<CompanyId, DREWorkbook>> = {};
-          (['nio', 'vtal', 'tecto'] as CompanyId[]).forEach((cid) => {
-            const rows = data.companyRows[cid];
-            if (Array.isArray(rows) && rows.length > 0) {
-              loaded[cid] = convertGcpRowsToWorkbook(rows, '2026/8');
+  // Carregamento automático e 100% conectado com o BigQuery + pré-carregamento de justificativas no boot
+  const loadAllFromGcp = async (forceRefresh = false) => {
+    setIsAutoLoadingGcp(true);
+    setGcpLoadError(null);
+    try {
+      // Pré-carrega em paralelo as justificativas históricas para resposta imediata
+      (['nio', 'vtal', 'tecto'] as CompanyId[]).forEach((cid) => {
+        fetch(`/api/gcp/justifications/load-company?companyId=${cid}&period=${encodeURIComponent(selectedPeriod)}${forceRefresh ? '&refresh=1' : ''}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (d?.success && d.allPeriods) {
+              const cleanedAll: Record<string, Record<string, RowJustifications>> = {};
+              for (const [pKey, pMap] of Object.entries(d.allPeriods)) {
+                cleanedAll[pKey] = cleanFakeJustifications(pMap as Record<string, RowJustifications>);
+              }
+              companyPeriodsCacheRef.current[cid] = {
+                ...(companyPeriodsCacheRef.current[cid] || {}),
+                ...cleanedAll,
+              };
             }
-          });
-          setGcpWorkbooks(loaded);
+            if (d?.success && d.allLookupKeys && typeof d.allLookupKeys === 'object') {
+              for (const [pKey, lMap] of Object.entries(d.allLookupKeys)) {
+                if (lMap && typeof lMap === 'object') {
+                  companyLookupCacheRef.current[`${cid}:${pKey}`] = lMap as Record<string, RowJustifications>;
+                }
+              }
+            }
+          })
+          .catch(() => {});
+      });
 
-          const initialCompany = activeCompany || 'nio';
-          const wb = loaded[initialCompany];
-          if (!wb) return;
+      const resp = await fetch(`/api/gcp/auto-load${forceRefresh ? '?refresh=1' : ''}`);
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData.message || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+
+      if (data.success && data.companyRows) {
+        const loaded: Partial<Record<CompanyId, DREWorkbook>> = {};
+        (['nio', 'vtal', 'tecto'] as CompanyId[]).forEach((cid) => {
+          const rows = data.companyRows[cid];
+          if (Array.isArray(rows) && rows.length > 0) {
+            loaded[cid] = convertGcpRowsToWorkbook(rows, '2026/8');
+          }
+        });
+        setGcpWorkbooks(loaded);
+
+        const targetCompany = activeCompany || 'nio';
+        const wb = loaded[targetCompany];
+        if (wb) {
           setWorkbook(wb);
           setCurrentFileName('agente_fpa.DRE_FINAL_EXECUTIVA (GCP)');
           if (wb.rows.length > 0) {
@@ -164,53 +285,89 @@ export default function App() {
           if (wb.monthCurrent) {
             setSelectedPeriod(wb.monthCurrent);
           }
-          showToast(`Conectado automaticamente ao BigQuery! ${data.totalRows} linhas carregadas.`, 'success');
         }
-      } catch (err) {
-        console.warn('Auto-load BigQuery inicial:', err);
-      } finally {
-        if (!isCancelled) {
-          setIsAutoLoadingGcp(false);
-        }
+        showToast(`Conectado ao BigQuery! ${data.totalRows} registros carregados.`, 'success');
+      } else {
+        throw new Error(data.message || 'Nenhum dado retornado do BigQuery.');
       }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Falha ao conectar ao BigQuery.';
+      console.warn('Auto-load BigQuery inicial:', err);
+      setGcpLoadError(msg);
+    } finally {
+      setIsAutoLoadingGcp(false);
     }
+  };
 
-    autoLoadBigQuery();
-
-    return () => {
-      isCancelled = true;
-    };
+  useEffect(() => {
+    loadAllFromGcp(false);
   }, []);
 
-  // Mantém cada empresa ligada ao respectivo recorte real do BigQuery.
+  // Mantém cada empresa ligada ao respectivo recorte real do BigQuery (ou vazio se não carregou).
   useEffect(() => {
-    if (activeCompany && gcpWorkbooks[activeCompany]) {
-      const liveWorkbook = gcpWorkbooks[activeCompany]!;
-      setWorkbook(liveWorkbook);
+    if (!activeCompany) return;
+    const liveWorkbook = gcpWorkbooks[activeCompany];
+    if (liveWorkbook) {
+      const targetPeriod = selectedPeriod || liveWorkbook.monthCurrent || '2026/8';
+      const syncedWb =
+        liveWorkbook.rawRecords && liveWorkbook.rawRecords.length > 0 && liveWorkbook.monthCurrent !== targetPeriod
+          ? calculateDREFromRaw(liveWorkbook.rawRecords, targetPeriod)
+          : liveWorkbook;
+      setWorkbook(syncedWb);
       setCurrentFileName('agente_fpa.DRE_FINAL_EXECUTIVA (GCP)');
-      if (liveWorkbook.rows.length > 0) {
-        setSelectedRowId(liveWorkbook.rows[0].id);
+      if (syncedWb.rows.length > 0) {
+        setSelectedRowId((prev) => (syncedWb.rows.some((r) => r.id === prev) ? prev : syncedWb.rows[0].id));
+      } else {
+        setSelectedRowId('');
       }
+    } else {
+      // Sem dados fake: mantém vazio até o banco carregar
+      setWorkbook({
+        monthPrevious: '2026/7',
+        monthCurrent: selectedPeriod || '2026/8',
+        rows: [],
+      });
+      setSelectedRowId('');
     }
   }, [activeCompany, gcpWorkbooks]);
 
   // Seleção e alternância de empresa (NIO, V.tal, Tecto)
   const handleSelectCompany = (cid: CompanyId) => {
+    const isSameCompany = activeCompany === cid;
     setActiveCompany(cid);
     localStorage.setItem('corp_active_company', cid);
 
-    const wb = gcpWorkbooks[cid] || getCompanyWorkbook(cid);
-    setWorkbook(wb);
-    setCurrentFileName(COMPANIES[cid].excelFileName);
-    if (wb.rows.length > 0) {
-      setSelectedRowId(wb.rows[0].id);
+    const liveWb = gcpWorkbooks[cid];
+    if (liveWb) {
+      const targetPeriod = selectedPeriod || liveWb.monthCurrent || '2026/8';
+      const syncedWb =
+        liveWb.rawRecords && liveWb.rawRecords.length > 0 && liveWb.monthCurrent !== targetPeriod
+          ? calculateDREFromRaw(liveWb.rawRecords, targetPeriod)
+          : liveWb;
+      setWorkbook(syncedWb);
+      setCurrentFileName('agente_fpa.DRE_FINAL_EXECUTIVA (GCP)');
+      if (syncedWb.rows.length > 0) {
+        setSelectedRowId(syncedWb.rows[0].id);
+      } else {
+        setSelectedRowId('');
+      }
+    } else {
+      setWorkbook({
+        monthPrevious: '2026/7',
+        monthCurrent: selectedPeriod || '2026/8',
+        rows: [],
+      });
+      setCurrentFileName(COMPANIES[cid].excelFileName);
+      setSelectedRowId('');
     }
     setSelectedDiretoria('ALL');
     setSelectedArea('ALL');
     setSelectedStatus('ALL');
 
-    setJustificationsMap({});
-    showToast(`Ambiente ${COMPANIES[cid].name} carregado com sucesso!`, 'success');
+    if (isSameCompany) {
+      fetchCompanyJustifications(cid, selectedPeriod);
+    }
+    showToast(`Ambiente ${COMPANIES[cid].name} selecionado!`, 'success');
   };
 
   const handleGoToPortal = () => {
@@ -292,12 +449,36 @@ export default function App() {
     return Array.from(set).sort();
   }, [relevantRows, selectedDiretoria]);
 
-  const isRowReconciled = (row: DRERow) => {
-    const justifications = justificationsMap[row.id] || {
+  const resolveRowJustifications = (row: DRERow | null | undefined): RowJustifications => {
+    const empty: RowJustifications = {
       momImpacts: [],
       vsOrcadoImpacts: [],
       ytdImpacts: [],
     };
+    if (!row) return empty;
+    if (justificationsMap[row.id]) return justificationsMap[row.id];
+
+    const dir = (row.diretoria || '').trim().toLowerCase();
+    const area = (row.area || '').trim().toLowerCase();
+    const n2 = (row.n2 || '').trim().toLowerCase();
+    const n3 = (row.n3 || '').trim().toLowerCase();
+    if (n3) {
+      if (n2) {
+        const byFullN2 = justificationsLookupMap[`${dir}|${area}|${n2}|${n3}`];
+        if (byFullN2) return byFullN2;
+        const byAreaN2 = justificationsLookupMap[`${area}|${n2}|${n3}`];
+        if (byAreaN2) return byAreaN2;
+      }
+      const byFull = justificationsLookupMap[`${dir}|${area}|${n3}`];
+      if (byFull) return byFull;
+      const byArea = justificationsLookupMap[`${area}|${n3}`];
+      if (byArea) return byArea;
+    }
+    return empty;
+  };
+
+  const isRowReconciled = (row: DRERow) => {
+    const justifications = resolveRowJustifications(row);
     const sum = (items: RowJustifications['momImpacts']) =>
       items.reduce((total, impact) => total + (Number(impact.value) || 0), 0);
     const momPending = row.realCurrent - row.realMMinus1 - sum(justifications.momImpacts || []);
@@ -358,7 +539,7 @@ export default function App() {
       completed,
       pending: organizationFilteredRows.length - completed,
     };
-  }, [organizationFilteredRows, justificationsMap]);
+  }, [organizationFilteredRows, justificationsMap, justificationsLookupMap]);
 
   // Em seguida aplica o status escolhido sem alterar os contadores do recorte.
   const filteredRows = useMemo(() => {
@@ -366,7 +547,7 @@ export default function App() {
     return organizationFilteredRows.filter((row) =>
       selectedStatus === 'COMPLETED' ? isRowReconciled(row) : !isRowReconciled(row)
     );
-  }, [organizationFilteredRows, selectedStatus, justificationsMap]);
+  }, [organizationFilteredRows, selectedStatus, justificationsMap, justificationsLookupMap]);
 
   // Garantir que a linha selecionada pertença ao subconjunto filtrado
   useEffect(() => {
@@ -383,12 +564,7 @@ export default function App() {
     filteredRows[0] ||
     null;
 
-  const currentJustifications: RowJustifications =
-    (selectedRow && justificationsMap[selectedRow.id]) || {
-      momImpacts: [],
-      vsOrcadoImpacts: [],
-      ytdImpacts: [],
-    };
+  const currentJustifications: RowJustifications = resolveRowJustifications(selectedRow);
 
   const handleWorkbookLoaded = (newWb: DREWorkbook, fileName: string) => {
     setWorkbook(newWb);
@@ -410,12 +586,22 @@ export default function App() {
 
   const handleUpdateJustifications = (updated: RowJustifications) => {
     if (!selectedRow) return;
-    setJustificationsMap((prev) => ({
-      ...prev,
-      [selectedRow.id]: updated,
-    }));
-
     const companyId = activeCompany;
+    setJustificationsMap((prev) => {
+      const next = {
+        ...prev,
+        [selectedRow.id]: updated,
+      };
+      if (companyId) {
+        if (!companyPeriodsCacheRef.current[companyId]) {
+          companyPeriodsCacheRef.current[companyId] = {};
+        }
+        companyPeriodsCacheRef.current[companyId][selectedPeriod] = next;
+        saveLocalJustifications(companyId, selectedPeriod, next);
+      }
+      return next;
+    });
+
     if (!companyId) return;
     const rowToSave = selectedRow;
     const timerKey = `${companyId}:${rowToSave.id}`;
@@ -690,11 +876,28 @@ export default function App() {
         onGoToPortal={handleGoToPortal}
       />
 
-      {/* BARRA DE STATUS DE SINCRONIZAÇÃO AUTOMÁTICA GCP */}
-      {isAutoLoadingGcp && (
-        <div className="bg-[#14412A] text-[#D8FED4] px-4 py-1.5 text-xs flex items-center justify-center gap-2 border-b border-[#39FF00]/30 font-medium">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#39FF00]" />
-          <span>Conectando automaticamente ao GCP BigQuery (vtal-fpea-prd &gt; agente_fpa.DRE_FINAL_EXECUTIVA)...</span>
+      {/* BARRA DE PROGRESSO E STATUS DE CARREGAMENTO (BIGQUERY + JUSTIFICATIVAS HISTÓRICAS) */}
+      {(isAutoLoadingGcp || isLoadingJustifications) && (
+        <div className="bg-[#14412A] text-[#D8FED4] border-b border-[#39FF00]/30 relative overflow-hidden">
+          <div className="max-w-7xl mx-auto px-4 py-2 text-xs flex items-center justify-between gap-3 font-medium">
+            <div className="flex items-center gap-2.5">
+              <Loader2 className="w-4 h-4 animate-spin text-[#39FF00] shrink-0" />
+              <span>
+                {isAutoLoadingGcp && isLoadingJustifications
+                  ? 'Carregando dados da DRE no BigQuery e sincronizando justificativas históricas do Bucket GCP...'
+                  : isAutoLoadingGcp
+                  ? 'Carregando dados reais da DRE no GCP BigQuery (vtal-fpea-prd > agente_fpa.DRE_FINAL_EXECUTIVA)...'
+                  : `Carregando justificativas históricas de ${company.name} (${selectedPeriod})...`}
+              </span>
+            </div>
+            <span className="text-[11px] text-[#39FF00] font-bold tracking-wide uppercase hidden sm:inline">
+              Sincronizando...
+            </span>
+          </div>
+          {/* Barra de carregamento animada */}
+          <div className="w-full h-1 bg-[#0D2B1B] overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-[#14412A] via-[#39FF00] to-[#14412A] w-full animate-pulse" />
+          </div>
         </div>
       )}
 
@@ -807,6 +1010,44 @@ export default function App() {
              LAYOUT DE EDIÇÃO E ANÁLISE EXECUTIVA
              =================================================== */
           <div className="space-y-6">
+            {/* AVISO DE BANCO VAZIO OU ERRO DE CARREGAMENTO (SEM DADOS FAKE) */}
+            {!isAutoLoadingGcp && workbook.rows.length === 0 && (
+              <div className="bg-white rounded-3xl border border-amber-300 p-6 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#14412A]">
+                      Nenhum dado carregado para {company.name} ({selectedPeriod})
+                    </h3>
+                    <p className="text-xs text-[#5A6454] mt-0.5">
+                      {gcpLoadError
+                        ? `Falha na consulta ao banco: ${gcpLoadError}`
+                        : 'Os dados não foram retornados pelo banco. Nenhum dado fictício (fake) é exibido.'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => loadAllFromGcp(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#14412A] hover:bg-[#1E5638] text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-[#39FF00]" />
+                    Recarregar Banco
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsGcpModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[#CCD8C7] bg-[#FAFBF9] hover:bg-white text-[#14412A] text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Configurar GCP
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* LINHA 1: CARD 1 (Filtro Organizacional Diretoria/Área) + CARD 2 (Selecionar Linha N3) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
               <div className="lg:col-span-4 flex flex-col">
@@ -848,6 +1089,7 @@ export default function App() {
               justifications={currentJustifications}
               monthPrevious={workbook.monthPrevious}
               monthCurrent={workbook.monthCurrent}
+              isLoadingJustifications={isLoadingJustifications || isAutoLoadingGcp}
               onAddImpact={handleAddImpact}
               onUpdateImpact={handleUpdateImpact}
               onRemoveImpact={handleRemoveImpact}
