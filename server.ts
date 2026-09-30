@@ -16,6 +16,7 @@ import {
   type PhysicalReportRow,
   type ReportCompanyId,
 } from './server/wordReport';
+import { buildFastXlsxBuffer, queryBigQueryFast } from './server/excelExport';
 
 dotenv.config();
 EventEmitter.defaultMaxListeners = 100;
@@ -824,28 +825,14 @@ const flattenJustificationSnapshot = (
 ) => {
   const periodDate = periodToBigQueryDate(period);
   if (!periodDate) throw new Error(`Período inválido para sincronização: ${period}`);
-
-  const row = payload.row && typeof payload.row === 'object'
-    ? payload.row as Record<string, unknown>
-    : {};
-  const periods = payload.periods && typeof payload.periods === 'object'
-    ? payload.periods as Record<string, unknown>
-    : {};
-  const periodData = periods[period] && typeof periods[period] === 'object'
-    ? periods[period] as Record<string, unknown>
-    : {};
-  const metadataByPeriod = payload.periodMetadata && typeof payload.periodMetadata === 'object'
-    ? payload.periodMetadata as Record<string, unknown>
-    : {};
-  const periodMetadata = metadataByPeriod[period] && typeof metadataByPeriod[period] === 'object'
-    ? metadataByPeriod[period] as Record<string, unknown>
-    : {};
+  const row = payload.row && typeof payload.row === 'object' ? payload.row as Record<string, unknown> : {};
+  const periods = payload.periods && typeof payload.periods === 'object' ? payload.periods as Record<string, unknown> : {};
+  const periodData = periods[period] && typeof periods[period] === 'object' ? periods[period] as Record<string, unknown> : {};
+  const metadataByPeriod = payload.periodMetadata && typeof payload.periodMetadata === 'object' ? payload.periodMetadata as Record<string, unknown> : {};
+  const periodMetadata = metadataByPeriod[period] && typeof metadataByPeriod[period] === 'object' ? metadataByPeriod[period] as Record<string, unknown> : {};
   const updatedAt = String(periodMetadata.updatedAt || payload.updatedAt || new Date().toISOString());
   const updatedBy = String(periodMetadata.updatedBy || payload.updatedBy || 'Usuário da aplicação');
-  const snapshotId = createHash('sha256')
-    .update(`${companyId}|${payload.rowId}|${period}|${updatedAt}`)
-    .digest('hex');
-
+  const snapshotId = createHash('sha256').update(`${companyId}|${payload.rowId}|${period}|${updatedAt}`).digest('hex');
   const groups = [
     { key: 'momImpacts', comparison: 'MOM_VS_MES_ANTERIOR' },
     { key: 'vsOrcadoImpacts', comparison: 'MES_VS_ORCADO' },
@@ -854,9 +841,7 @@ const flattenJustificationSnapshot = (
   const rows: Array<Record<string, unknown>> = [];
 
   for (const group of groups) {
-    const impacts = Array.isArray(periodData[group.key])
-      ? periodData[group.key] as StoredImpact[]
-      : [];
+    const impacts = Array.isArray(periodData[group.key]) ? periodData[group.key] as StoredImpact[] : [];
     for (const impact of impacts) {
       const numericValue = Number(impact.value);
       rows.push({
@@ -865,78 +850,41 @@ const flattenJustificationSnapshot = (
         EMPRESA: normalizedCompanyName(companyId),
         ROW_ID: String(payload.rowId || ''),
         CLASSIFICACAO_FPA: String(payload.classification || row.n3 || ''),
-        DIRETORIA: String(row.diretoria || '-'),
-        AREA: String(row.area || '-'),
-        NIVEL_2: String(row.nivel2 || '-'),
-        NIVEL_3: String(row.nivel3 || '-'),
-        NIVEL_4: String(row.nivel4 || '-'),
-        ANOMES: periodDate,
-        PERIODO: period,
-        TIPO_COMPARACAO: group.comparison,
-        IMPACT_ID: String(impact.id || ''),
-        IMPACTO: String(impact.name || ''),
+        DIRETORIA: String(row.diretoria || '-'), AREA: String(row.area || '-'),
+        NIVEL_2: String(row.nivel2 || '-'), NIVEL_3: String(row.nivel3 || '-'), NIVEL_4: String(row.nivel4 || '-'),
+        ANOMES: periodDate, PERIODO: period, TIPO_COMPARACAO: group.comparison,
+        IMPACT_ID: String(impact.id || ''), IMPACTO: String(impact.name || ''),
         VALOR: Number.isFinite(numericValue) ? numericValue : 0,
-        JUSTIFICATIVA: String(impact.justification || ''),
-        UPDATED_AT: updatedAt,
-        UPDATED_BY: updatedBy,
-        OBJECT_PATH: objectPath,
-        IS_EMPTY_SNAPSHOT: false,
+        JUSTIFICATIVA: String(impact.justification || ''), UPDATED_AT: updatedAt, UPDATED_BY: updatedBy,
+        OBJECT_PATH: objectPath, IS_EMPTY_SNAPSHOT: false,
       });
     }
   }
 
   if (rows.length === 0) {
     rows.push({
-      SNAPSHOT_ID: snapshotId,
-      COMPANY_ID: companyId.toLowerCase(),
-      EMPRESA: normalizedCompanyName(companyId),
-      ROW_ID: String(payload.rowId || ''),
-      CLASSIFICACAO_FPA: String(payload.classification || row.n3 || ''),
-      DIRETORIA: String(row.diretoria || '-'),
-      AREA: String(row.area || '-'),
-      NIVEL_2: String(row.nivel2 || '-'),
-      NIVEL_3: String(row.nivel3 || '-'),
-      NIVEL_4: String(row.nivel4 || '-'),
-      ANOMES: periodDate,
-      PERIODO: period,
-      TIPO_COMPARACAO: 'SEM_IMPACTOS',
-      IMPACT_ID: '',
-      IMPACTO: '',
-      VALOR: 0,
-      JUSTIFICATIVA: '',
-      UPDATED_AT: updatedAt,
-      UPDATED_BY: updatedBy,
-      OBJECT_PATH: objectPath,
-      IS_EMPTY_SNAPSHOT: true,
+      SNAPSHOT_ID: snapshotId, COMPANY_ID: companyId.toLowerCase(), EMPRESA: normalizedCompanyName(companyId),
+      ROW_ID: String(payload.rowId || ''), CLASSIFICACAO_FPA: String(payload.classification || row.n3 || ''),
+      DIRETORIA: String(row.diretoria || '-'), AREA: String(row.area || '-'),
+      NIVEL_2: String(row.nivel2 || '-'), NIVEL_3: String(row.nivel3 || '-'), NIVEL_4: String(row.nivel4 || '-'),
+      ANOMES: periodDate, PERIODO: period, TIPO_COMPARACAO: 'SEM_IMPACTOS', IMPACT_ID: '', IMPACTO: '',
+      VALOR: 0, JUSTIFICATIVA: '', UPDATED_AT: updatedAt, UPDATED_BY: updatedBy,
+      OBJECT_PATH: objectPath, IS_EMPTY_SNAPSHOT: true,
     });
   }
-
   return rows;
 };
 
 async function syncJustificationSnapshotToBigQuery(
-  companyId: string,
-  objectPath: string,
-  payload: Record<string, unknown>,
-  period: string,
+  companyId: string, objectPath: string, payload: Record<string, unknown>, period: string,
 ) {
-  const bigquery = getBigQueryClient({
-    projectId: JUSTIFICATIONS_BQ_PROJECT,
-    credentials: defaultCredentials,
-  });
+  const bigquery = getBigQueryClient({ projectId: JUSTIFICATIONS_BQ_PROJECT, credentials: defaultCredentials });
   const rows = flattenJustificationSnapshot(companyId, objectPath, payload, period);
-  const rawRows = rows.map((row, index) => ({
-    insertId: `${row.SNAPSHOT_ID}-${index}`,
-    json: row,
-  }));
-
+  const rawRows = rows.map((row, index) => ({ insertId: `${row.SNAPSHOT_ID}-${index}`, json: row }));
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      await bigquery
-        .dataset(JUSTIFICATIONS_BQ_DATASET)
-        .table(JUSTIFICATIONS_BQ_HISTORY_TABLE)
-        .insert(rawRows, { raw: true });
+      await bigquery.dataset(JUSTIFICATIONS_BQ_DATASET).table(JUSTIFICATIONS_BQ_HISTORY_TABLE).insert(rawRows, { raw: true });
       return rows.length;
     } catch (error) {
       lastError = error;
@@ -1663,6 +1611,157 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     console.error('[Word] Falha ao gerar leitura executiva:', error);
     return res.status(500).json({ success: false, message: error instanceof Error ? error.message : 'Falha ao gerar o Word.' });
+  }
+});
+
+// Exporta o Razão Detalhado ou o Resumo Executivo (Razão Executiva) em Excel (.xlsx) conforme empresa e filtros selecionados
+app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.body?.companyId || 'nio').toLowerCase() as ReportCompanyId;
+    const diretoria = String(req.body?.diretoria || 'ALL').trim();
+    const area = String(req.body?.area || 'ALL').trim();
+
+    if (!['nio', 'vtal', 'tecto'].includes(companyId)) {
+      return res.status(400).json({ success: false, message: 'Empresa inválida.' });
+    }
+
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+
+    const detailedSelectCols = `
+      atribuicao, empresa, n_documento, conta_do_razao, tipo_de_documento,
+      data_de_lancamento, data_do_documento, valor, texto, centro_custo,
+      anomes, referencia, documento_de_compras, documento_de_compras_item,
+      centro_de_lucro, elemento_pep, usuario, ORDEM, ORDEM_DESCRICAO,
+      cat_class_contabil, CHAVE_OPEX, CHAVE_RECEITA, material_final,
+      CONTA_CONTABIL_DESCRICAO, DENOMINACAO_CENTRO_DE_CUSTO,
+      RESPONSAVEL_CENTRO_DE_CUSTO, DEPARTAMENTO_CENTRO_DE_CUSTO,
+      DESCRICAO_CENTRO_DE_CUSTO, CLASSIFICACAO_FPA, NIVEL_0, NIVEL_1,
+      NIVEL_2, NIVEL_3, NIVEL_4, NIVEL_5, AREA, NIO_N1, NIO_N2, NIO_N3,
+      AREA_NIO, PONTO_FOCAL_FINANCEIRO_NIO, RESPONSAVEL_NIO,
+      AREA_RESPONSAVEL_NIO, DIRETOR_NIO, DIRETORIA_NIO, SOURCE, TIPO,
+      Pais, LTLA, Conta_Contabil_GNET, Montante_em_moeda_interna_GNET,
+      Moeda_interna, Moeda_do_grupo, Montante_avaliado_MI3,
+      Montante_avaliado_MI2, Empresa_Gnet, Cambio, fornecedor_original,
+      nome_fornecedor, grupo_doc, cliente_original, nome_cliente
+    `;
+
+    const baseScopeFilter = `
+      (ARVORE_DF2 <> 'PÓS-EBITDA' OR ARVORE_DF2 IS NULL)
+      AND (NIVEL_0 NOT IN ('Below Ebitda', 'CAPEX', 'FÍSICOS') OR NIVEL_0 IS NULL)
+    `;
+
+    let query = '';
+    let fallbackQuery = '';
+    const params: Record<string, unknown> = {};
+    let sheetName = 'Razao';
+    let fileLabel = 'Razao';
+
+    if (companyId === 'nio') {
+      if (!diretoria || diretoria === 'ALL') {
+        // Todas as diretorias -> Resumo Executivo da Nio (DRE_FINAL_EXECUTIVA onde NIVEL_2 = 'Nio')
+        query = `
+          SELECT *
+          FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA\`
+          WHERE TRIM(NIVEL_2) = 'Nio'
+            AND ${baseScopeFilter}
+        `;
+        sheetName = 'Razao Executiva Nio';
+        fileLabel = 'Razao_Executiva_Nio';
+      } else {
+        // Diretoria específica -> Razão Detalhado da Nio filtrado por DIRETORIA_NIO
+        params.diretoria = diretoria;
+        query = `
+          SELECT *
+          FROM \`vtal-fpea-prd.relatorios.VW_DRE_RELATORIO\`
+          WHERE TRIM(NIVEL_2) = 'Nio'
+            AND TRIM(DIRETORIA_NIO) = @diretoria
+        `;
+        fallbackQuery = `
+          SELECT ${detailedSelectCols}
+          FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL\`
+          WHERE TIPO IN ('ACTUAL 2026', 'Budget 2026')
+            AND ${baseScopeFilter}
+            AND TRIM(NIVEL_2) = 'Nio'
+            AND TRIM(DIRETORIA_NIO) = @diretoria
+        `;
+        sheetName = `Razao ${diretoria}`.slice(0, 31);
+        fileLabel = `Razao_Nio_${diretoria.replace(/[^a-zA-Z0-9_-]+/g, '_')}`;
+      }
+    } else if (companyId === 'vtal') {
+      if (!area || area === 'ALL') {
+        // Todas as Áreas -> Resumo Executivo da Vtal (DRE_FINAL_EXECUTIVA onde NIVEL_2 != 'Nio' e 'Tecto')
+        query = `
+          SELECT *
+          FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA\`
+          WHERE NIVEL_2 IS NOT NULL
+            AND TRIM(NIVEL_2) NOT IN ('Nio', 'Tecto')
+            AND ${baseScopeFilter}
+        `;
+        sheetName = 'Razao Executiva Vtal';
+        fileLabel = 'Razao_Executiva_Vtal';
+      } else {
+        // Área específica -> Razão Detalhado da Vtal filtrado por AREA
+        params.area = area;
+        query = `
+          SELECT *
+          FROM \`vtal-fpea-prd.relatorios.VW_DRE_RELATORIO\`
+          WHERE NIVEL_2 IS NOT NULL
+            AND TRIM(NIVEL_2) NOT IN ('Nio', 'Tecto')
+            AND TRIM(AREA) = @area
+        `;
+        fallbackQuery = `
+          SELECT ${detailedSelectCols}
+          FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL\`
+          WHERE TIPO IN ('ACTUAL 2026', 'Budget 2026')
+            AND ${baseScopeFilter}
+            AND NIVEL_2 IS NOT NULL
+            AND TRIM(NIVEL_2) NOT IN ('Nio', 'Tecto')
+            AND TRIM(AREA) = @area
+        `;
+        sheetName = `Razao ${area}`.slice(0, 31);
+        fileLabel = `Razao_Vtal_${area.replace(/[^a-zA-Z0-9_-]+/g, '_')}`;
+      }
+    } else {
+      // Tecto (NIVEL_2 = 'Tecto') -> Sempre Razão Detalhada Tecto sem filtro de área
+      query = `
+        SELECT *
+        FROM \`vtal-fpea-prd.relatorios.VW_DRE_RELATORIO\`
+        WHERE TRIM(NIVEL_2) = 'Tecto'
+      `;
+      fallbackQuery = `
+        SELECT ${detailedSelectCols}
+        FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL\`
+        WHERE TIPO IN ('ACTUAL 2026', 'Budget 2026')
+          AND ${baseScopeFilter}
+          AND TRIM(NIVEL_2) = 'Tecto'
+      `;
+      sheetName = 'Razao Detalhada Tecto';
+      fileLabel = 'Razao_Detalhada_Tecto';
+    }
+
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await queryBigQueryFast(bigquery, query, params);
+    } catch (primaryErr) {
+      if (fallbackQuery) {
+        rows = await queryBigQueryFast(bigquery, fallbackQuery, params);
+      } else {
+        throw primaryErr;
+      }
+    }
+
+    const xlsxBuffer = await buildFastXlsxBuffer(rows, sheetName);
+    const filename = `${fileLabel}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(xlsxBuffer);
+  } catch (error: unknown) {
+    console.error('[Excel Razão] Falha ao exportar razão em Excel:', error);
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Falha ao exportar planilha Excel.',
+    });
   }
 });
 

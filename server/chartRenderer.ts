@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import sharp from 'sharp';
-import opentype from 'opentype.js';
+import opentype, { type Font } from 'opentype.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function escapeXml(str: string): string {
   if (!str) return '';
@@ -13,50 +17,60 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
-let regularFont: opentype.Font | null = null;
-let boldFont: opentype.Font | null = null;
+let regularFont: Font | null = null;
+let boldFont: Font | null = null;
 let fontsInitialized = false;
 
+function parseTtfFile(filePath: string): Font | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const buf = fs.readFileSync(filePath);
+    const arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    return opentype.parse(arrayBuffer);
+  } catch (err) {
+    console.warn('[ChartRenderer] Falha ao fazer parse da fonte TTF:', filePath, err);
+    return null;
+  }
+}
+
 function ensureVectorFontsLoaded() {
-  if (fontsInitialized) return;
+  if (fontsInitialized && (regularFont || boldFont)) return;
   fontsInitialized = true;
 
   const regularCandidates = [
+    path.resolve(__dirname, 'fonts', 'DejaVuSans.ttf'),
     path.resolve(process.cwd(), 'server', 'fonts', 'DejaVuSans.ttf'),
+    path.resolve(__dirname, '..', 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSans.ttf'),
     path.resolve(process.cwd(), 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSans.ttf'),
   ];
   const boldCandidates = [
+    path.resolve(__dirname, 'fonts', 'DejaVuSans-Bold.ttf'),
     path.resolve(process.cwd(), 'server', 'fonts', 'DejaVuSans-Bold.ttf'),
+    path.resolve(__dirname, '..', 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSans-Bold.ttf'),
     path.resolve(process.cwd(), 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSans-Bold.ttf'),
   ];
 
   for (const p of regularCandidates) {
-    if (fs.existsSync(p)) {
-      try {
-        regularFont = opentype.loadSync(p);
-        break;
-      } catch (err) {
-        console.warn('[ChartRenderer] Falha ao carregar fonte regular:', err);
-      }
+    const f = parseTtfFile(p);
+    if (f) {
+      regularFont = f;
+      break;
     }
   }
 
   for (const p of boldCandidates) {
-    if (fs.existsSync(p)) {
-      try {
-        boldFont = opentype.loadSync(p);
-        break;
-      } catch (err) {
-        console.warn('[ChartRenderer] Falha ao carregar fonte negrito:', err);
-      }
+    const f = parseTtfFile(p);
+    if (f) {
+      boldFont = f;
+      break;
     }
   }
 }
 
 /**
- * Converte texto em <path d="..." /> vetorial puro usando opentype.js + DejaVuSans.ttf.
- * Isso elimina 100% da dependência de fontes instaladas no sistema operacional / container Cloud Run / Render,
- * garantindo que nunca apareçam "quadradinhos" (tofu) nos gráficos exportados no Word.
+ * Converte texto em <path d="..." /> vetorial puro usando opentype.js + DejaVuSans.ttf (charToGlyph).
+ * Evita tabelas GSUB/Bidi incompatíveis e elimina 100% da dependência de fontes instaladas no sistema operacional
+ * (Cloud Run / Render / Docker), garantindo que nunca apareçam "quadradinhos" (tofu □□□□) nos gráficos do Word.
  */
 function renderSvgText(params: {
   text: string;
@@ -76,20 +90,54 @@ function renderSvgText(params: {
   if (font) {
     try {
       const cleanText = String(text);
-      const advanceWidth = font.getAdvanceWidth(cleanText, fontSize);
-      let drawX = x;
-      if (textAnchor === 'middle') {
-        drawX = x - advanceWidth / 2;
-      } else if (textAnchor === 'end') {
-        drawX = x - advanceWidth;
+      const scale = (1 / font.unitsPerEm) * fontSize;
+      const glyphs = Array.from(cleanText).map((ch) => {
+        try {
+          return font.charToGlyph(ch);
+        } catch {
+          return font.charToGlyph(' ');
+        }
+      });
+
+      let totalWidth = 0;
+      for (let i = 0; i < glyphs.length; i++) {
+        const g = glyphs[i];
+        totalWidth += (g.advanceWidth || 0) * scale;
+        if (i < glyphs.length - 1) {
+          try {
+            totalWidth += font.getKerningValue(g, glyphs[i + 1]) * scale;
+          } catch {}
+        }
       }
-      const glyphPath = font.getPath(cleanText, drawX, y, fontSize);
-      const d = glyphPath.toPathData(2);
+
+      let curX = x;
+      if (textAnchor === 'middle') {
+        curX = x - totalWidth / 2;
+      } else if (textAnchor === 'end') {
+        curX = x - totalWidth;
+      }
+
+      const fullPath = new opentype.Path();
+      for (let i = 0; i < glyphs.length; i++) {
+        const g = glyphs[i];
+        try {
+          const gp = g.getPath(curX, y, fontSize);
+          fullPath.extend(gp);
+        } catch {}
+        curX += (g.advanceWidth || 0) * scale;
+        if (i < glyphs.length - 1) {
+          try {
+            curX += font.getKerningValue(g, glyphs[i + 1]) * scale;
+          } catch {}
+        }
+      }
+
+      const d = fullPath.toPathData(2);
       if (d) {
         return `<path d="${d}" fill="${fill}" />`;
       }
-    } catch {
-      // Fallback para <text> caso algum caractere falhe
+    } catch (err) {
+      console.warn('[ChartRenderer] Erro ao converter texto em path:', err);
     }
   }
 

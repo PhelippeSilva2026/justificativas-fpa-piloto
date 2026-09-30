@@ -118,6 +118,7 @@ export default function App() {
 
   const [activeView, setActiveView] = useState<'dashboard' | 'presentation'>('dashboard');
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
   const [isGcpModalOpen, setIsGcpModalOpen] = useState<boolean>(false);
   const [isAutoLoadingGcp, setIsAutoLoadingGcp] = useState<boolean>(true);
   const [gcpLoadError, setGcpLoadError] = useState<string | null>(null);
@@ -126,6 +127,7 @@ export default function App() {
   );
   const [cloudSaveStatus, setCloudSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const statusHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
@@ -608,6 +610,10 @@ export default function App() {
     if (saveTimersRef.current[timerKey]) {
       clearTimeout(saveTimersRef.current[timerKey]);
     }
+    if (statusHideTimerRef.current) {
+      clearTimeout(statusHideTimerRef.current);
+      statusHideTimerRef.current = null;
+    }
     setCloudSaveStatus('saving');
     saveTimersRef.current[timerKey] = setTimeout(async () => {
       try {
@@ -625,9 +631,15 @@ export default function App() {
         const result = await response.json();
         if (!result.success) throw new Error(result.message || 'Falha ao salvar');
         setCloudSaveStatus('saved');
-        setTimeout(() => setCloudSaveStatus('idle'), 2500);
+        if (statusHideTimerRef.current) {
+          clearTimeout(statusHideTimerRef.current);
+        }
+        statusHideTimerRef.current = setTimeout(() => {
+          setCloudSaveStatus('idle');
+          statusHideTimerRef.current = null;
+        }, 2800);
       } catch (error) {
-        console.error('Erro ao salvar justificativa no Bucket:', error);
+        console.error('Erro ao salvar justificativa no Banco de Dados:', error);
         setCloudSaveStatus('error');
       } finally {
         delete saveTimersRef.current[timerKey];
@@ -803,6 +815,62 @@ export default function App() {
     }
   };
 
+  // Exportar Razão Detalhado ou Resumo Executivo em Excel conforme empresa e filtros selecionados
+  const handleExportRazaoExcel = async () => {
+    const cid = activeCompany || 'nio';
+    const cInfo = COMPANIES[cid];
+    try {
+      setIsExportingExcel(true);
+      showToast(
+        `Extraindo base de razão em Excel (${cInfo.shortName}) conforme filtro selecionado...`,
+        'success'
+      );
+
+      const response = await fetch('/api/reports/export-razao-excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId: cid,
+          diretoria: selectedDiretoria,
+          area: selectedArea,
+          period: selectedPeriod,
+        }),
+      });
+
+      if (!response.ok) {
+        let errMsg = 'Falha ao exportar planilha Excel.';
+        try {
+          const errJson = await response.json();
+          if (errJson?.message) errMsg = errJson.message;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const fileMatch = disposition.match(/filename="?([^"]+)"?/i);
+      const downloadName = fileMatch?.[1] || `Razao_${cInfo.shortName}.xlsx`;
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      showToast(`Planilha Excel (${downloadName}) baixada com sucesso!`, 'success');
+    } catch (err: unknown) {
+      showToast(
+        `Erro ao baixar Excel: ${err instanceof Error ? err.message : 'Falha na extração'}`,
+        'error'
+      );
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   // Navegação entre slides no modo apresentação
   const currentIndex = filteredRows.findIndex((r) => r.id === selectedRow?.id);
   const handlePrevSlide = () => {
@@ -874,6 +942,10 @@ export default function App() {
         currentCompany={activeCompany}
         onSelectCompany={handleSelectCompany}
         onGoToPortal={handleGoToPortal}
+        selectedDiretoria={selectedDiretoria}
+        selectedArea={selectedArea}
+        onExportRazaoExcel={handleExportRazaoExcel}
+        isExportingExcel={isExportingExcel}
       />
 
       {/* BARRA DE PROGRESSO E STATUS DE CARREGAMENTO (BIGQUERY + JUSTIFICATIVAS HISTÓRICAS) */}
@@ -922,25 +994,89 @@ export default function App() {
       )}
 
       {cloudSaveStatus !== 'idle' && (
-        <div className={`fixed bottom-6 left-6 z-50 px-3.5 py-2 rounded-xl shadow-lg border flex items-center gap-2 text-xs font-semibold ${
-          cloudSaveStatus === 'error'
-            ? 'bg-red-50 text-red-800 border-red-300'
-            : 'bg-white text-[#14412A] border-[#CCD8C7]'
-        }`}>
-          {cloudSaveStatus === 'saving' ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : cloudSaveStatus === 'saved' ? (
-            <CheckCircle className="w-3.5 h-3.5 text-green-600" />
-          ) : (
-            <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-          )}
-          <span>
-            {cloudSaveStatus === 'saving'
-              ? 'Salvando no GCP...'
-              : cloudSaveStatus === 'saved'
-              ? 'Justificativa salva no GCP'
-              : 'Falha ao salvar no GCP'}
-          </span>
+        <div className="fixed bottom-6 inset-x-0 z-50 px-4 sm:px-6 lg:px-8 pointer-events-none flex justify-center">
+          <div
+            className={`w-full max-w-5xl rounded-2xl px-5 py-3.5 shadow-2xl border-2 relative overflow-hidden transition-all duration-300 flex items-center justify-between gap-4 ${
+              cloudSaveStatus === 'error'
+                ? 'bg-[#8B0000] text-white border-red-300'
+                : cloudSaveStatus === 'saved'
+                ? activeCompany === 'nio'
+                  ? 'bg-[#14412A] text-white border-[#39FF00]'
+                  : 'bg-[#1B3B32] text-white border-[#4F927F]'
+                : 'bg-[#1F2937] text-white border-white/25'
+            }`}
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  cloudSaveStatus === 'error'
+                    ? 'bg-red-500/30 text-white'
+                    : cloudSaveStatus === 'saved'
+                    ? activeCompany === 'nio'
+                      ? 'bg-[#39FF00]/20 text-[#39FF00]'
+                      : 'bg-[#4F927F]/30 text-[#7CE5C6]'
+                    : 'bg-white/15 text-white'
+                }`}
+              >
+                {cloudSaveStatus === 'saving' ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : cloudSaveStatus === 'saved' ? (
+                  <CheckCircle className="w-5 h-5" />
+                ) : (
+                  <AlertCircle className="w-5 h-5" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm sm:text-base font-extrabold tracking-tight truncate">
+                  {cloudSaveStatus === 'saving'
+                    ? 'Salvando alterações no banco de dados...'
+                    : cloudSaveStatus === 'saved'
+                    ? 'Justificativa salva no banco de dados.'
+                    : 'Falha ao salvar no banco de dados.'}
+                </p>
+                <p className="text-[11px] text-white/80 font-medium hidden sm:block truncate">
+                  {cloudSaveStatus === 'saving'
+                    ? `Sincronizando justificativa de ${company.shortName} (${selectedPeriod})...`
+                    : cloudSaveStatus === 'saved'
+                    ? `Registro atualizado com sucesso para ${company.shortName} (${selectedPeriod})`
+                    : 'Verifique sua conexão e tente novamente'}
+                </p>
+              </div>
+            </div>
+
+            <span
+              className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shrink-0 ${
+                cloudSaveStatus === 'error'
+                  ? 'bg-red-900/60 text-red-100 border border-red-400/40'
+                  : cloudSaveStatus === 'saved'
+                  ? activeCompany === 'nio'
+                    ? 'bg-[#39FF00] text-[#14412A]'
+                    : 'bg-[#4F927F] text-white'
+                  : 'bg-white/15 text-white'
+              }`}
+            >
+              {cloudSaveStatus === 'saving'
+                ? 'Gravando...'
+                : cloudSaveStatus === 'saved'
+                ? 'Salvo Automaticamente'
+                : 'Erro'}
+            </span>
+
+            {/* Barra inferior de progresso/confirmação */}
+            <div className="absolute bottom-0 inset-x-0 h-1 bg-black/25 overflow-hidden">
+              <div
+                className={`h-full w-full ${
+                  cloudSaveStatus === 'saving'
+                    ? 'bg-gradient-to-r from-transparent via-white to-transparent animate-pulse'
+                    : cloudSaveStatus === 'saved'
+                    ? activeCompany === 'nio'
+                      ? 'bg-[#39FF00]'
+                      : 'bg-[#7CE5C6]'
+                    : 'bg-red-400'
+                }`}
+              />
+            </div>
+          </div>
         </div>
       )}
 

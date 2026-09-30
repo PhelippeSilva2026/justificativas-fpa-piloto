@@ -1,7 +1,6 @@
 import React from 'react';
 import { CompanyLogo } from './CompanyLogo';
-import { Download, FileSpreadsheet, Presentation, Layers, ArrowLeft } from 'lucide-react';
-import { exportTemplateExcelFile } from '../utils/excelParser';
+import { FileSpreadsheet, Presentation, Layers, ArrowLeft, Loader2 } from 'lucide-react';
 import { DREWorkbook, CompanyId } from '../types';
 import { COMPANIES } from '../utils/companyConfigs';
 
@@ -23,19 +22,49 @@ interface NavbarProps {
   currentCompany: CompanyId;
   onSelectCompany: (company: CompanyId) => void;
   onGoToPortal: () => void;
+  selectedDiretoria: string;
+  selectedArea: string;
+  onExportRazaoExcel: () => void;
+  isExportingExcel: boolean;
+}
+
+function getExcelButtonLabel(
+  companyId: CompanyId,
+  selectedDiretoria: string,
+  selectedArea: string
+): string {
+  if (companyId === 'tecto') {
+    return 'Razão Detalhada Tecto';
+  }
+
+  if (companyId === 'vtal') {
+    if (!selectedArea || selectedArea === 'ALL') {
+      return 'Razão Executiva Vtal';
+    }
+    return `Razão ${selectedArea}`;
+  }
+
+  // NIO (NIVEL_2 = 'Nio')
+  if (!selectedDiretoria || selectedDiretoria === 'ALL') {
+    return 'Razão Executiva Nio';
+  }
+
+  const shortDirMap: Record<string, string> = {
+    'CSC e Controladoria': 'Razão CSC e Contr.',
+    'Crédito, Cobrança e Fraude': 'Razão Créd., Cob. e Fraude',
+    'Suporte de Operações': 'Razão Sup. Operações',
+    'Transformação de Negócios': 'Razão Transf. Negócios',
+    'Performance e Suporte': 'Razão Perf. e Suporte',
+  };
+
+  return shortDirMap[selectedDiretoria] || `Razão ${selectedDiretoria}`;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
-  workbook,
-  currentFileName,
   monthPrevious,
-  monthCurrent,
   selectedPeriod,
   onSelectPeriod,
-  onExportCurrentSlide,
   onExportAllSlides,
-  onLoadSample,
-  onOpenGcpModal,
   isExporting,
   activeView,
   onToggleView,
@@ -43,6 +72,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentCompany,
   onSelectCompany,
   onGoToPortal,
+  selectedDiretoria,
+  selectedArea,
+  onExportRazaoExcel,
+  isExportingExcel,
 }) => {
   const availablePeriods = [
     '2026/1', '2026/2', '2026/3', '2026/4',
@@ -51,6 +84,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   ];
 
   const company = COMPANIES[currentCompany] || COMPANIES.nio;
+  const excelLabel = getExcelButtonLabel(currentCompany, selectedDiretoria, selectedArea);
 
   // Cores dinâmicas do header por empresa
   const headerBgClass =
@@ -175,28 +209,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* Baixar Modelo Excel */}
+          {/* Extração do Razão Detalhado ou Resumo Executivo em Excel conforme filtro */}
           <button
             type="button"
-            onClick={() => exportTemplateExcelFile(workbook, `${company.excelFileName}`)}
-            className="hidden xl:flex items-center gap-1.5 px-3 py-2 rounded-full bg-black/25 hover:bg-black/40 text-xs font-medium text-white border border-white/20 transition-colors cursor-pointer"
-            title="Baixar planilha Excel com dados atuais da empresa (.xlsx)"
+            onClick={onExportRazaoExcel}
+            disabled={isExportingExcel}
+            className={`px-3.5 sm:px-4 py-2 rounded-full font-extrabold text-xs active:scale-95 transition-all shadow-md flex items-center gap-1.5 sm:gap-2 cursor-pointer disabled:opacity-60 ${exportBtnBg}`}
+            title={`Baixar planilha Excel (.xlsx): ${excelLabel}`}
           >
-            <FileSpreadsheet className={`w-3.5 h-3.5 ${accentColorText}`} />
-            Excel
-          </button>
-
-          {/* Exportar Slide Atual */}
-          <button
-            type="button"
-            onClick={onExportCurrentSlide}
-            disabled={isExporting}
-            className={`px-3.5 sm:px-4 py-2 rounded-full font-extrabold text-xs active:scale-95 transition-all shadow-md flex items-center gap-1.5 sm:gap-2 cursor-pointer ${exportBtnBg}`}
-            title="Exportar este slide N3 em formato .pptx com logo e formatação da empresa"
-          >
-            <Download className="w-4 h-4 shrink-0" />
-            <span className="hidden sm:inline">{isExporting ? 'Exportando...' : 'Exportar Slide'}</span>
-            <span className="sm:hidden">PPTX</span>
+            {isExportingExcel ? (
+              <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="w-4 h-4 shrink-0" />
+            )}
+            <span className="truncate max-w-[180px] sm:max-w-[240px]">
+              {isExportingExcel ? 'Extraindo Excel...' : excelLabel}
+            </span>
           </button>
 
           {/* Exportar Deck Completo */}

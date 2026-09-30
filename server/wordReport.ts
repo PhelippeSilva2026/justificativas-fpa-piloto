@@ -258,9 +258,7 @@ export async function generateExecutiveWordReport(input: WordReportInput): Promi
     });
   }
 
-  // A tipagem já considera os três retornos especializados acima. Mantemos o
-  // gerador legado abaixo como fallback defensivo para futuras empresas.
-  const company = COMPANY[input.companyId as ReportCompanyId];
+  const company = COMPANY[input.companyId as ReportCompanyId] || COMPANY.nio;
   const label = periodLabel(input.period);
   const totals = input.financialRows.reduce((acc, row) => ({
     realCurrent: acc.realCurrent + row.realCurrent,
