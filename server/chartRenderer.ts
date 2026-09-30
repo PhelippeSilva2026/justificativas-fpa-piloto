@@ -1,4 +1,7 @@
+import fs from 'fs';
+import path from 'path';
 import sharp from 'sharp';
+import opentype from 'opentype.js';
 
 function escapeXml(str: string): string {
   if (!str) return '';
@@ -8,6 +11,89 @@ function escapeXml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+let regularFont: opentype.Font | null = null;
+let boldFont: opentype.Font | null = null;
+let fontsInitialized = false;
+
+function ensureVectorFontsLoaded() {
+  if (fontsInitialized) return;
+  fontsInitialized = true;
+
+  const regularCandidates = [
+    path.resolve(process.cwd(), 'server', 'fonts', 'DejaVuSans.ttf'),
+    path.resolve(process.cwd(), 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSans.ttf'),
+  ];
+  const boldCandidates = [
+    path.resolve(process.cwd(), 'server', 'fonts', 'DejaVuSans-Bold.ttf'),
+    path.resolve(process.cwd(), 'node_modules', 'dejavu-fonts-ttf', 'ttf', 'DejaVuSans-Bold.ttf'),
+  ];
+
+  for (const p of regularCandidates) {
+    if (fs.existsSync(p)) {
+      try {
+        regularFont = opentype.loadSync(p);
+        break;
+      } catch (err) {
+        console.warn('[ChartRenderer] Falha ao carregar fonte regular:', err);
+      }
+    }
+  }
+
+  for (const p of boldCandidates) {
+    if (fs.existsSync(p)) {
+      try {
+        boldFont = opentype.loadSync(p);
+        break;
+      } catch (err) {
+        console.warn('[ChartRenderer] Falha ao carregar fonte negrito:', err);
+      }
+    }
+  }
+}
+
+/**
+ * Converte texto em <path d="..." /> vetorial puro usando opentype.js + DejaVuSans.ttf.
+ * Isso elimina 100% da dependência de fontes instaladas no sistema operacional / container Cloud Run / Render,
+ * garantindo que nunca apareçam "quadradinhos" (tofu) nos gráficos exportados no Word.
+ */
+function renderSvgText(params: {
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  fill: string;
+  fontWeight?: 'normal' | 'bold';
+  textAnchor?: 'start' | 'middle' | 'end';
+}): string {
+  const { text, x, y, fontSize, fill, fontWeight = 'normal', textAnchor = 'start' } = params;
+  if (!text) return '';
+
+  ensureVectorFontsLoaded();
+  const font = fontWeight === 'bold' ? boldFont || regularFont : regularFont || boldFont;
+
+  if (font) {
+    try {
+      const cleanText = String(text);
+      const advanceWidth = font.getAdvanceWidth(cleanText, fontSize);
+      let drawX = x;
+      if (textAnchor === 'middle') {
+        drawX = x - advanceWidth / 2;
+      } else if (textAnchor === 'end') {
+        drawX = x - advanceWidth;
+      }
+      const glyphPath = font.getPath(cleanText, drawX, y, fontSize);
+      const d = glyphPath.toPathData(2);
+      if (d) {
+        return `<path d="${d}" fill="${fill}" />`;
+      }
+    } catch {
+      // Fallback para <text> caso algum caractere falhe
+    }
+  }
+
+  return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-family="DejaVu Sans, Arial, sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" text-anchor="${textAnchor}" fill="${fill}">${escapeXml(text)}</text>`;
 }
 
 export interface WaterfallBar {
@@ -26,7 +112,7 @@ export interface WaterfallOptions {
 }
 
 /**
- * Renderiza um gráfico de cascata (waterfall) financeiro em SVG e converte para Buffer PNG de alta resolução
+ * Renderiza um gráfico de cascata (waterfall) financeiro em SVG (com textos vetoriais em <path>) e converte para Buffer PNG de alta resolução
  */
 export async function renderWaterfallChart(options: WaterfallOptions): Promise<Buffer> {
   const width = options.width || 560;
@@ -38,7 +124,7 @@ export async function renderWaterfallChart(options: WaterfallOptions): Promise<B
   const { bars } = options;
   if (!bars.length) {
     const emptySvg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#ffffff"/></svg>`;
-    return sharp(Buffer.from(emptySvg)).png().toBuffer();
+    return sharp(Buffer.from(emptySvg), { density: 192 }).png().toBuffer();
   }
 
   // Calcula valores acumulados
@@ -68,7 +154,11 @@ export async function renderWaterfallChart(options: WaterfallOptions): Promise<B
         start,
         end,
         isTotal: true,
-        displayValue: bar.displayValue || (bar.value < 0 ? `(${Math.abs(bar.value).toFixed(1)})` : bar.value.toFixed(1)),
+        displayValue:
+          bar.displayValue ||
+          (bar.value < 0
+            ? `(${Math.abs(bar.value).toFixed(1).replace('.', ',')})`
+            : bar.value.toFixed(1).replace('.', ',')),
         isPositive: bar.value >= 0,
       });
       minVal = Math.min(minVal, 0, bar.value);
@@ -83,7 +173,11 @@ export async function renderWaterfallChart(options: WaterfallOptions): Promise<B
         start,
         end,
         isTotal: false,
-        displayValue: bar.displayValue || (bar.value >= 0 ? `+${bar.value.toFixed(1)}` : `${bar.value.toFixed(1)}`),
+        displayValue:
+          bar.displayValue ||
+          (bar.value >= 0
+            ? `+${bar.value.toFixed(1).replace('.', ',')}`
+            : `${bar.value.toFixed(1).replace('.', ',')}`),
         isPositive: bar.value >= 0,
       });
       minVal = Math.min(minVal, start, end);
@@ -92,10 +186,10 @@ export async function renderWaterfallChart(options: WaterfallOptions): Promise<B
   }
 
   // Margem de segurança vertical
-  const range = (maxVal - minVal) || 1;
+  const range = maxVal - minVal || 1;
   const yMin = minVal - range * 0.15;
   const yMax = maxVal + range * 0.15;
-  const yRange = (yMax - yMin) || 1;
+  const yRange = yMax - yMin || 1;
 
   const scaleY = (val: number) => {
     return padding.top + chartHeight - ((val - yMin) / yRange) * chartHeight;
@@ -105,15 +199,23 @@ export async function renderWaterfallChart(options: WaterfallOptions): Promise<B
   const slotWidth = chartWidth / computedBars.length;
   const zeroY = scaleY(0);
 
-  let svgElements = '';
+  let svgElements = `<rect width="${width}" height="${height}" fill="#ffffff" />`;
 
   // Título do gráfico
   if (options.title) {
-    svgElements += `<text x="${padding.left}" y="20" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#14412A">${escapeXml(options.title)}</text>`;
+    svgElements += renderSvgText({
+      text: options.title,
+      x: padding.left,
+      y: 20,
+      fontSize: 12,
+      fontWeight: 'bold',
+      fill: '#14412A',
+      textAnchor: 'start',
+    });
   }
 
   // Linha zero
-  svgElements += `<line x1="${padding.left}" y1="${zeroY}" x2="${width - padding.right}" y2="${zeroY}" stroke="#D1D5DB" stroke-width="1" stroke-dasharray="2,2" />`;
+  svgElements += `<line x1="${padding.left}" y1="${zeroY.toFixed(1)}" x2="${width - padding.right}" y2="${zeroY.toFixed(1)}" stroke="#D1D5DB" stroke-width="1" stroke-dasharray="2,2" />`;
 
   // Renderiza cada barra
   computedBars.forEach((bar, idx) => {
@@ -132,20 +234,52 @@ export async function renderWaterfallChart(options: WaterfallOptions): Promise<B
 
     // Valor acima ou abaixo da barra
     const labelY = bar.isPositive || bar.isTotal ? yTop - 5 : yBottom + 12;
-    const textColor = bar.isTotal ? '#1F2937' : (bar.isPositive ? '#15803D' : '#B91C1C');
-    svgElements += `<text x="${(x + barWidth / 2).toFixed(1)}" y="${labelY.toFixed(1)}" font-family="Arial, sans-serif" font-size="9" font-weight="bold" text-anchor="middle" fill="${textColor}">${escapeXml(bar.displayValue)}</text>`;
+    const textColor = bar.isTotal ? '#1F2937' : bar.isPositive ? '#15803D' : '#B91C1C';
+    svgElements += renderSvgText({
+      text: bar.displayValue,
+      x: x + barWidth / 2,
+      y: labelY,
+      fontSize: 9,
+      fontWeight: 'bold',
+      fill: textColor,
+      textAnchor: 'middle',
+    });
 
     // Rótulo no eixo X (quebrado em palavras se necessário)
     const words = bar.label.split(' ');
     if (words.length > 1 && bar.label.length > 7) {
-      svgElements += `<text x="${(x + barWidth / 2).toFixed(1)}" y="${(height - padding.bottom + 12).toFixed(1)}" font-family="Arial, sans-serif" font-size="8" fill="#4B5563" text-anchor="middle">${escapeXml(words[0])}</text>`;
-      svgElements += `<text x="${(x + barWidth / 2).toFixed(1)}" y="${(height - padding.bottom + 22).toFixed(1)}" font-family="Arial, sans-serif" font-size="8" fill="#4B5563" text-anchor="middle">${escapeXml(words.slice(1).join(' '))}</text>`;
+      svgElements += renderSvgText({
+        text: words[0],
+        x: x + barWidth / 2,
+        y: height - padding.bottom + 12,
+        fontSize: 8,
+        fontWeight: 'normal',
+        fill: '#4B5563',
+        textAnchor: 'middle',
+      });
+      svgElements += renderSvgText({
+        text: words.slice(1).join(' '),
+        x: x + barWidth / 2,
+        y: height - padding.bottom + 22,
+        fontSize: 8,
+        fontWeight: 'normal',
+        fill: '#4B5563',
+        textAnchor: 'middle',
+      });
     } else {
-      svgElements += `<text x="${(x + barWidth / 2).toFixed(1)}" y="${(height - padding.bottom + 14).toFixed(1)}" font-family="Arial, sans-serif" font-size="8.5" fill="#4B5563" text-anchor="middle">${escapeXml(bar.label)}</text>`;
+      svgElements += renderSvgText({
+        text: bar.label,
+        x: x + barWidth / 2,
+        y: height - padding.bottom + 14,
+        fontSize: 8.5,
+        fontWeight: 'normal',
+        fill: '#4B5563',
+        textAnchor: 'middle',
+      });
     }
   });
 
-  const fullSvg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" style="background:#ffffff">
+  const fullSvg = `<svg width="${width * 2}" height="${height * 2}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
     ${svgElements}
   </svg>`;
 
@@ -169,22 +303,30 @@ export async function renderLineChart(options: {
 }): Promise<Buffer> {
   const width = options.width || 380;
   const height = options.height || 160;
-  const padding = { top: 25, right: 30, bottom: 30, left: 35 };
+  const padding = { top: 25, right: 36, bottom: 30, left: 35 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
-  let allVals: number[] = [];
+  const allVals: number[] = [];
   options.series.forEach((s) => allVals.push(...s.data));
   const minVal = Math.min(...allVals, 0);
   const maxVal = Math.max(...allVals, 1) * 1.15;
-  const range = (maxVal - minVal) || 1;
+  const range = maxVal - minVal || 1;
 
-  const scaleX = (idx: number) => padding.left + (idx / (options.labels.length - 1)) * chartWidth;
+  const scaleX = (idx: number) => padding.left + (idx / Math.max(1, options.labels.length - 1)) * chartWidth;
   const scaleY = (val: number) => padding.top + chartHeight - ((val - minVal) / range) * chartHeight;
 
-  let svgElements = '';
+  let svgElements = `<rect width="${width}" height="${height}" fill="#ffffff" />`;
   if (options.title) {
-    svgElements += `<text x="${padding.left}" y="15" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#14412A">${escapeXml(options.title)}</text>`;
+    svgElements += renderSvgText({
+      text: options.title,
+      x: padding.left,
+      y: 15,
+      fontSize: 10,
+      fontWeight: 'bold',
+      fill: '#14412A',
+      textAnchor: 'start',
+    });
   }
 
   // Linhas das séries
@@ -193,7 +335,7 @@ export async function renderLineChart(options: {
     s.data.forEach((val, i) => {
       const x = scaleX(i);
       const y = scaleY(val);
-      pathD += (i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`);
+      pathD += i === 0 ? `M ${x.toFixed(1)} ${y.toFixed(1)}` : ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
     });
     const dash = s.strokeDasharray ? `stroke-dasharray="${s.strokeDasharray}"` : '';
     svgElements += `<path d="${pathD}" fill="none" stroke="${s.color}" stroke-width="2" ${dash} />`;
@@ -201,17 +343,33 @@ export async function renderLineChart(options: {
     // Último ponto com rótulo
     const lastX = scaleX(s.data.length - 1);
     const lastY = scaleY(s.data[s.data.length - 1]);
-    svgElements += `<circle cx="${lastX}" cy="${lastY}" r="3" fill="${s.color}" />`;
-    svgElements += `<text x="${lastX + 4}" y="${lastY + 3}" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="${s.color}">${s.data[s.data.length - 1].toFixed(2)}%</text>`;
+    svgElements += `<circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="3" fill="${s.color}" />`;
+    svgElements += renderSvgText({
+      text: `${s.data[s.data.length - 1].toFixed(2).replace('.', ',')}%`,
+      x: lastX + 4,
+      y: lastY + 3,
+      fontSize: 8,
+      fontWeight: 'bold',
+      fill: s.color,
+      textAnchor: 'start',
+    });
   });
 
   // Rótulos X
   options.labels.forEach((label, i) => {
     const x = scaleX(i);
-    svgElements += `<text x="${x}" y="${height - 10}" font-family="Arial, sans-serif" font-size="7.5" fill="#6B7280" text-anchor="middle">${escapeXml(label)}</text>`;
+    svgElements += renderSvgText({
+      text: label,
+      x,
+      y: height - 10,
+      fontSize: 7.5,
+      fontWeight: 'normal',
+      fill: '#6B7280',
+      textAnchor: 'middle',
+    });
   });
 
-  const fullSvg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" style="background:#ffffff">
+  const fullSvg = `<svg width="${width * 2}" height="${height * 2}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
     ${svgElements}
   </svg>`;
 
@@ -239,21 +397,29 @@ export async function renderBarWithLineChart(options: {
   const allVals = [...options.bars, ...(options.forecastLine || [])];
   const minVal = Math.min(...allVals, 0);
   const maxVal = Math.max(...allVals, 1) * 1.2;
-  const range = (maxVal - minVal) || 1;
+  const range = maxVal - minVal || 1;
 
-  const scaleX = (idx: number) => padding.left + (idx / options.labels.length) * chartWidth;
+  const scaleX = (idx: number) => padding.left + (idx / Math.max(1, options.labels.length)) * chartWidth;
   const scaleY = (val: number) => padding.top + chartHeight - ((val - minVal) / range) * chartHeight;
-  const slotWidth = chartWidth / options.labels.length;
+  const slotWidth = chartWidth / Math.max(1, options.labels.length);
   const barWidth = slotWidth * 0.65;
   const zeroY = scaleY(0);
 
-  let svgElements = '';
+  let svgElements = `<rect width="${width}" height="${height}" fill="#ffffff" />`;
   if (options.title) {
-    svgElements += `<text x="${padding.left}" y="15" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#14412A">${escapeXml(options.title)}</text>`;
+    svgElements += renderSvgText({
+      text: options.title,
+      x: padding.left,
+      y: 15,
+      fontSize: 10,
+      fontWeight: 'bold',
+      fill: '#14412A',
+      textAnchor: 'start',
+    });
   }
 
   // Linha zero
-  svgElements += `<line x1="${padding.left}" y1="${zeroY}" x2="${width - padding.right}" y2="${zeroY}" stroke="#E5E7EB" stroke-width="1" />`;
+  svgElements += `<line x1="${padding.left}" y1="${zeroY.toFixed(1)}" x2="${width - padding.right}" y2="${zeroY.toFixed(1)}" stroke="#E5E7EB" stroke-width="1" />`;
 
   // Barras
   options.bars.forEach((val, i) => {
@@ -264,8 +430,16 @@ export async function renderBarWithLineChart(options: {
     const isLast = i === options.bars.length - 1;
     const fill = isLast ? '#14412A' : '#475569';
 
-    svgElements += `<rect x="${x}" y="${yTop}" width="${barWidth}" height="${h}" rx="1" fill="${fill}" />`;
-    svgElements += `<text x="${x + barWidth / 2}" y="${height - 10}" font-family="Arial, sans-serif" font-size="7" fill="#6B7280" text-anchor="middle">${escapeXml(options.labels[i])}</text>`;
+    svgElements += `<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="${fill}" />`;
+    svgElements += renderSvgText({
+      text: options.labels[i] || '',
+      x: x + barWidth / 2,
+      y: height - 10,
+      fontSize: 7,
+      fontWeight: 'normal',
+      fill: '#6B7280',
+      textAnchor: 'middle',
+    });
   });
 
   // Linha de forecast
@@ -274,17 +448,25 @@ export async function renderBarWithLineChart(options: {
     options.forecastLine.forEach((val, i) => {
       const x = scaleX(i) + slotWidth / 2;
       const y = scaleY(val);
-      pathD += (i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`);
+      pathD += i === 0 ? `M ${x.toFixed(1)} ${y.toFixed(1)}` : ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
     });
     svgElements += `<path d="${pathD}" fill="none" stroke="#10B981" stroke-width="1.5" stroke-dasharray="3,3" />`;
   }
 
   // Rótulo destaque no topo
   if (options.highlightLast) {
-    svgElements += `<text x="${width - padding.right}" y="15" font-family="Arial, sans-serif" font-size="8.5" font-weight="bold" fill="#14412A" text-anchor="end">${escapeXml(options.highlightLast.label)}</text>`;
+    svgElements += renderSvgText({
+      text: options.highlightLast.label,
+      x: width - padding.right,
+      y: 15,
+      fontSize: 8.5,
+      fontWeight: 'bold',
+      fill: '#14412A',
+      textAnchor: 'end',
+    });
   }
 
-  const fullSvg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" style="background:#ffffff">
+  const fullSvg = `<svg width="${width * 2}" height="${height * 2}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
     ${svgElements}
   </svg>`;
 
