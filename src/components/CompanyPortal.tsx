@@ -113,7 +113,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
             />
             <div>
               <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
-                Análise de desvios e Justificativas
+                Plataforma de Inteligência Financeira | FP&amp;A
               </h1>
               <p className="text-[11px] text-white/70">
                 FP&A ManagementCo · NIO · V.tal · Tecto

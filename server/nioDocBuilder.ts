@@ -16,8 +16,9 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
-import { NIO_AGO26_DATA } from './nioData';
+import { buildNioDynamicPageData } from './nioData';
 import { NioExecutiveNarrative } from './geminiExecutiveReport';
+import { FinancialReportRow, PhysicalReportRow } from './wordReport';
 import {
   formatCell,
   nioHeading,
@@ -36,13 +37,25 @@ import {
 
 const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
 
+const MONTHS_PT = [
+  '', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+];
+
 export async function buildNioExecutiveDocx(params: {
   period: string;
+  financialRows?: FinancialReportRow[];
+  physicalRows?: PhysicalReportRow[];
   narrative: NioExecutiveNarrative;
   logoBuffer?: Buffer;
 }): Promise<Buffer> {
-  const { narrative, logoBuffer } = params;
-  const d = NIO_AGO26_DATA;
+  const { period, financialRows, physicalRows, narrative, logoBuffer } = params;
+  const [yStr, mStr] = String(period || '2026/8').split('/');
+  const year = Number(yStr) || 2026;
+  const month = Number(mStr) || 8;
+  const monthName = MONTHS_PT[month] || 'Agosto';
+  const shortYear = String(year).slice(-2);
+  const d = buildNioDynamicPageData({ period, financialRows, physicalRows });
 
   // 1. Gerar os 8 gráficos oficiais em PNG de alta resolução
   const [
@@ -192,7 +205,7 @@ export async function buildNioExecutiveDocx(params: {
                   new Paragraph({
                     children: [
                       new TextRun({
-                        text: 'Fechamento Agosto/26 · Documento de leitura',
+                        text: `Fechamento ${monthName}/${shortYear} · Documento de leitura`,
                         size: 15,
                         color: '6B7280',
                         font: 'Aptos',
@@ -236,7 +249,7 @@ export async function buildNioExecutiveDocx(params: {
       spacing: { before: 100, after: 30 },
       children: [
         new TextRun({
-          text: 'NIO | Fechamento Agosto/2026',
+          text: `NIO | Fechamento ${monthName}/${year}`,
           bold: true,
           size: 32,
           color: '111827',

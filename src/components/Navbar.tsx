@@ -98,7 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base sm:text-lg font-bold text-white tracking-tight leading-none">
-                  Análise de Desvios e Justificativas
+                  Plataforma de Inteligência Financeira | FP&amp;A
                 </h1>
               </div>
             </div>

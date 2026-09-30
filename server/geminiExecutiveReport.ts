@@ -1,4 +1,7 @@
+import fs from 'fs';
+import path from 'path';
 import { GoogleGenAI } from '@google/genai';
+import { GoogleAuth } from 'google-auth-library';
 import { FinancialReportRow, PhysicalReportRow } from './wordReport';
 
 export interface NioExecutiveNarrative {
@@ -28,6 +31,321 @@ export interface NioExecutiveNarrative {
     channelReading: string;
     commissionsAndDeferral: string;
   };
+}
+
+export interface VtalExecutiveNarrative {
+  highlights: string[];
+  ytdBauBullets: string[];
+  revenueDetailBullets: string[];
+  newBusinessBullets: string[];
+  projectsFootnote: string;
+  projectsBullets: string[];
+}
+
+export interface TectoExecutiveNarrative {
+  highlights: string[];
+  ytdBauBullets: string[];
+  opexDetailBullets: string[];
+}
+
+const MONTHS_PT = [
+  '',
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
+
+function parsePeriodInfo(period: string) {
+  const [yStr, mStr] = String(period || '2026/8').split('/');
+  const year = Number(yStr) || 2026;
+  const month = Number(mStr) || 8;
+  const monthName = MONTHS_PT[month] || 'Agosto';
+  return { year, month, monthName, monthLower: monthName.toLowerCase(), fullLabel: `${monthName}/${year}` };
+}
+
+function fmtR(valMn: number): string {
+  const rounded = Math.round(valMn);
+  const abs = Math.abs(rounded).toLocaleString('pt-BR');
+  return rounded < 0 ? `R$(${abs})mn` : `R$${abs}mn`;
+}
+
+function fmtRDec(valMn: number): string {
+  const abs = Math.abs(valMn).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return valMn < 0 ? `-R$ ${abs}Mn` : `R$ ${abs}Mn`;
+}
+
+function getGenAIClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+}
+
+let cachedServiceAccount: Record<string, unknown> | null = null;
+function getServiceAccountCredentials(): Record<string, unknown> | null {
+  if (cachedServiceAccount) return cachedServiceAccount;
+  try {
+    const saPath = path.resolve(process.cwd(), 'server', 'service-account.json');
+    if (fs.existsSync(saPath)) {
+      cachedServiceAccount = JSON.parse(fs.readFileSync(saPath, 'utf-8'));
+      return cachedServiceAccount;
+    }
+  } catch (err) {
+    console.warn('[Gemini Narrative] Erro ao ler service-account.json:', err);
+  }
+  return null;
+}
+
+function extractJsonObject<T>(rawText: string): T | null {
+  if (!rawText) return null;
+  const cleaned = rawText
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)) as T;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
+/**
+ * Consulta a IA do Gemini via SDK oficial (@google/genai) ou via Agente Executivo FP&A no Cloud Run (fpa-a2a-agent)
+ */
+async function callGeminiExecutiveJson<T>(prompt: string, label: string): Promise<T | null> {
+  // 1. Tentativa via @google/genai (gemini-3-flash-preview) se GEMINI_API_KEY estiver configurada
+  const ai = getGenAIClient();
+  if (ai) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+      const parsed = extractJsonObject<T>(response.text || '');
+      if (parsed) {
+        console.log(`[Gemini Narrative ${label}] Gerado via @google/genai (gemini-3-flash-preview).`);
+        return parsed;
+      }
+    } catch (err) {
+      console.warn(`[Gemini Narrative ${label}] Falha no @google/genai, tentando Cloud Run Agent:`, err);
+    }
+  }
+
+  // 2. Tentativa via Agente Executivo FP&A no Cloud Run (fpa-a2a-agent autenticado via GCP service-account)
+  const creds = getServiceAccountCredentials();
+  if (creds) {
+    try {
+      const auth = new GoogleAuth({ credentials: creds as never });
+      const a2aUrl = 'https://fpa-a2a-agent-7kylviopuq-uc.a.run.app';
+      const idClient = await auth.getIdTokenClient(a2aUrl);
+      const headers = await idClient.getRequestHeaders();
+      const authHeaders =
+        typeof (headers as Headers).entries === 'function'
+          ? Object.fromEntries((headers as Headers).entries())
+          : { ...(headers as unknown as Record<string, string>) };
+
+      const messageId = `word-${label}-${Date.now()}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+
+      try {
+        const a2aRes = await fetch(a2aUrl, {
+          method: 'POST',
+          headers: {
+            ...authHeaders,
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: messageId,
+            method: 'message/stream',
+            params: {
+              configuration: { blocking: true, acceptedOutputModes: [] },
+              message: {
+                kind: 'message',
+                messageId,
+                role: 'user',
+                parts: [{ kind: 'text', text: prompt }],
+              },
+            },
+          }),
+          signal: controller.signal,
+        });
+
+        if (a2aRes.ok) {
+          const sseText = await a2aRes.text();
+          let finalResponseText = '';
+          let dataResultText = '';
+          for (const line of sseText.split('\n')) {
+            if (line.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(line.slice(6));
+                const event = json.result || json;
+                if (event.artifact?.parts) {
+                  for (const part of event.artifact.parts) {
+                    if (part.text) {
+                      if (event.artifact.name === 'Final response') {
+                        finalResponseText += (finalResponseText ? '\n' : '') + part.text;
+                      } else {
+                        dataResultText += (dataResultText ? '\n' : '') + part.text;
+                      }
+                    }
+                  }
+                }
+              } catch {
+                // ignora linha parcial
+              }
+            }
+          }
+          const chosen = finalResponseText.trim() || dataResultText.trim();
+          const parsed = extractJsonObject<T>(chosen);
+          if (parsed) {
+            console.log(`[Gemini Narrative ${label}] Análise gerada com sucesso pelo Agente Gemini FP&A (Cloud Run)!`);
+            return parsed;
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      console.log(`[Gemini Narrative ${label}] Usando síntese executiva consolidada do período.`);
+    }
+  }
+
+  return null;
+}
+
+function cleanSingleJustificationText(raw: unknown): string {
+  const text = String(raw || '').trim();
+  if (!text || text === '0' || text.toLowerCase() === 'dentro do orçado') return '';
+  // Remove prefixos repetitivos de conciliação histórica ("Resumo histórico até ago/26...")
+  if (text.startsWith('Resumo histórico até')) {
+    const parts = text.split('|').map((p) => p.trim()).filter(Boolean);
+    const lastPart = parts[parts.length - 1] || '';
+    return lastPart
+      .replace(/^Resumo histórico até[^.]*\.\s*/i, '')
+      .replace(/^(Volume|Preço|Orçamento|Postergação|Outros):\s*/i, '')
+      .replace(/^(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)(\/[a-z]{3})?:\s*/i, '')
+      .trim()
+      .slice(0, 180);
+  }
+  return text.slice(0, 180);
+}
+
+function summarizeJustificationsForPrompt(
+  financialRows: FinancialReportRow[],
+  justifications: Record<string, unknown>
+) {
+  const items: Array<{
+    linha: string;
+    nivel0: string;
+    nivel2: string;
+    nivel3: string;
+    nivel4: string;
+    area: string;
+    orcadoMesMn: number;
+    realMesMn: number;
+    deltaMesMn: number;
+    orcadoYtdMn: number;
+    realYtdMn: number;
+    deltaYtdMn: number;
+    comentariosMes: string[];
+    comentariosYtd: string[];
+  }> = [];
+
+  for (const row of financialRows) {
+    const just = justifications[row.id] as
+      | {
+          vsOrcadoImpacts?: Array<{ name?: string; justification?: string }>;
+          ytdImpacts?: Array<{ name?: string; justification?: string }>;
+          momImpacts?: Array<{ name?: string; justification?: string }>;
+        }
+      | undefined;
+    const comentariosMes = [
+      ...(just?.vsOrcadoImpacts || []),
+      ...(just?.momImpacts || []),
+    ]
+      .map((i) => cleanSingleJustificationText(i.justification))
+      .filter((t) => t.length > 0);
+    const comentariosYtd = (just?.ytdImpacts || [])
+      .map((i) => cleanSingleJustificationText(i.justification))
+      .filter((t) => t.length > 0);
+
+    if (
+      comentariosMes.length > 0 ||
+      comentariosYtd.length > 0 ||
+      Math.abs(row.realYtd - row.budgetYtd) >= 2_000_000 ||
+      Math.abs(row.realCurrent - row.budgetCurrent) >= 1_000_000
+    ) {
+      items.push({
+        linha: row.classification,
+        nivel0: row.level0 || 'BAU',
+        nivel2: row.level2 || '-',
+        nivel3: row.level3,
+        nivel4: row.level4,
+        area: row.area,
+        orcadoMesMn: Number((row.budgetCurrent / 1_000_000).toFixed(1)),
+        realMesMn: Number((row.realCurrent / 1_000_000).toFixed(1)),
+        deltaMesMn: Number(((row.realCurrent - row.budgetCurrent) / 1_000_000).toFixed(1)),
+        orcadoYtdMn: Number((row.budgetYtd / 1_000_000).toFixed(1)),
+        realYtdMn: Number((row.realYtd / 1_000_000).toFixed(1)),
+        deltaYtdMn: Number(((row.realYtd - row.budgetYtd) / 1_000_000).toFixed(1)),
+        comentariosMes: comentariosMes.slice(0, 2),
+        comentariosYtd: comentariosYtd.slice(0, 1),
+      });
+    }
+  }
+
+  return items
+    .sort((a, b) => Math.abs(b.deltaYtdMn) + Math.abs(b.deltaMesMn) - (Math.abs(a.deltaYtdMn) + Math.abs(a.deltaMesMn)))
+    .slice(0, 20);
+}
+
+function isCleanExecutiveBullet(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  // Rejeita bullets que acumulam histórico mensal bruto ou colchetes de dump
+  if (/Resumo histórico até/i.test(trimmed)) return false;
+  if (/\b(mai|jun|jul|ago):\s/i.test(trimmed)) return false;
+  if (trimmed.includes('[Resumo') || trimmed.length > 520) return false;
+  return true;
+}
+
+function pickExecutiveBullets(aiBullets: string[] | undefined, fallbackBullets: string[]): string[] {
+  if (!Array.isArray(aiBullets) || aiBullets.length === 0) return fallbackBullets;
+  const cleaned = aiBullets.filter(isCleanExecutiveBullet);
+  if (cleaned.length !== fallbackBullets.length) return fallbackBullets;
+  return cleaned;
 }
 
 /**
@@ -102,7 +420,232 @@ export const DEFAULT_NIO_NARRATIVE: NioExecutiveNarrative = {
 };
 
 /**
- * Consulta a IA do Gemini para gerar/enriquecer as análises executivas
+ * Constrói dinamicamente a narrativa executiva da V.tal com base nos números reais do BigQuery e nas justificativas do GCP da competência selecionada
+ */
+function buildDynamicVtalNarrative(params: {
+  period: string;
+  financialRows: FinancialReportRow[];
+  physicalRows: PhysicalReportRow[];
+  justifications: Record<string, unknown>;
+}): VtalExecutiveNarrative {
+  const { period, financialRows, justifications } = params;
+  const { monthName, year } = parsePeriodInfo(period);
+
+  const isRev = (r: FinancialReportRow) => {
+    if (r.level1 && r.level1 !== '-') return r.level1.toLowerCase().includes('revenue');
+    return ['FTTH', 'Wholesale', 'Other Revenue (Swaps, IRU)', 'Connectivity', 'Low latency', 'TIC', 'Performance Business', 'UmTelecom', 'Copper', 'IPV4'].includes(r.level3);
+  };
+
+  const sum = (rows: FinancialReportRow[], pred: (r: FinancialReportRow) => boolean) => {
+    let mOrc = 0, mReal = 0, yOrc = 0, yReal = 0;
+    for (const r of rows) {
+      if (pred(r)) {
+        mOrc += r.budgetCurrent / 1_000_000;
+        mReal += r.realCurrent / 1_000_000;
+        yOrc += r.budgetYtd / 1_000_000;
+        yReal += r.realYtd / 1_000_000;
+      }
+    }
+    return { mOrc, mReal, mDelta: mReal - mOrc, yOrc, yReal, yDelta: yReal - yOrc };
+  };
+
+  const bauRows = financialRows.filter(
+    (r) => (r.level0 || 'BAU').trim().toUpperCase() === 'BAU' && (r.level2 || 'V.tal').trim() === 'V.tal'
+  );
+  const exLtlaRows = financialRows.filter((r) => (r.level2 || 'V.tal').trim() !== 'V.tal (LTLA)');
+
+  const mRev = sum(exLtlaRows, isRev);
+  const mOpex = sum(exLtlaRows, (r) => !isRev(r));
+  const mEbitda = {
+    mOrc: mRev.mOrc + mOpex.mOrc,
+    mReal: mRev.mReal + mOpex.mReal,
+    mDelta: mRev.mDelta + mOpex.mDelta,
+  };
+
+  const bauRev = sum(bauRows, isRev);
+  const bauOpex = sum(bauRows, (r) => !isRev(r));
+  const bauEbitda = {
+    yOrc: bauRev.yOrc + bauOpex.yOrc,
+    yReal: bauRev.yReal + bauOpex.yReal,
+    yDelta: bauRev.yDelta + bauOpex.yDelta,
+  };
+
+  const anchor = sum(bauRows, (r) => r.level3 === 'FTTH' && r.level4 === 'Anchor Tenant');
+  const anchorConn = sum(bauRows, (r) => r.level3 === 'FTTH' && r.level4 === 'Anchor Tenant' && r.classification.toLowerCase().includes('connection'));
+  const anchorTax = sum(bauRows, (r) => r.level3 === 'FTTH' && r.level4 === 'Anchor Tenant' && r.classification.toLowerCase().includes('beneficio'));
+  const anchorOther = sum(bauRows, (r) => r.level3 === 'FTTH' && r.level4 === 'Anchor Tenant' && !r.classification.toLowerCase().includes('monthly') && !r.classification.toLowerCase().includes('connection') && !r.classification.toLowerCase().includes('voip') && !r.classification.toLowerCase().includes('beneficio'));
+  const otherTenants = sum(bauRows, (r) => r.level3 === 'FTTH' && r.level4 === 'Other Tenants');
+  const wholesale = sum(bauRows, (r) => r.level3 === 'Wholesale');
+  const otherRev = sum(bauRows, (r) => r.level3 === 'Other Revenue (Swaps, IRU)');
+
+  const maint = sum(bauRows, (r) => !isRev(r) && r.level3 === 'Maintenance & Operational Costs');
+  const passive = sum(bauRows, (r) => !isRev(r) && r.level3 === 'Passive network infrastructure');
+  const swaps = sum(bauRows, (r) => !isRev(r) && r.level3 === 'Swaps');
+  const hr = sum(bauRows, (r) => !isRev(r) && r.level3 === 'HR');
+  const sga = sum(bauRows, (r) => !isRev(r) && r.level3 === 'SG&A');
+  const others = sum(bauRows, (r) => !isRev(r) && r.level3 === 'Others');
+
+  const projTotal = sum(financialRows, (r) => (r.level0 || '').trim().toUpperCase() === 'SPECIAL PROJECTS');
+  const projIpv4 = sum(
+    financialRows,
+    (r) =>
+      (r.level0 || '').trim().toUpperCase() === 'SPECIAL PROJECTS' &&
+      (r.level3.trim().toUpperCase() === 'IPV4' ||
+        r.classification.trim().toUpperCase() === 'RECEITA IPV4')
+  );
+  const projBuildings = sum(
+    financialRows,
+    (r) =>
+      (r.level0 || '').trim().toUpperCase() === 'SPECIAL PROJECTS' &&
+      (r.level3.trim() === 'Real Estate' ||
+        r.classification.trim() === 'Real Estate - Venda de Prédios' ||
+        r.level4.trim() === 'Sales of Buildings')
+  );
+  const projCopper = sum(
+    financialRows,
+    (r) => (r.level0 || '').trim().toUpperCase() === 'SPECIAL PROJECTS' && r.level3.trim() === 'Copper'
+  );
+
+  return {
+    highlights: [
+      `EBITDA BAU (ex-LTLA) acumulado até ${monthName}/${year} de ${fmtR(bauEbitda.yReal)}, ${fmtR(bauEbitda.yDelta)} vs. orçado (${fmtR(bauEbitda.yOrc)}), impulsionado por menores custos de manutenção (${fmtR(maint.yDelta)}), redução de gastos com infraestrutura passiva (${fmtR(passive.yDelta)}), ganhos em energia e economias em Swaps (${fmtR(swaps.yDelta)}) e HR (${fmtR(hr.yDelta)}).`,
+      `No mês de ${monthName}/${year}, a Receita Líquida consolidada atingiu ${fmtR(mRev.mReal)} ante ${fmtR(mRev.mOrc)} orçados (Δ ${fmtR(mRev.mDelta)}), o OPEX registrou ${fmtR(mOpex.mReal)} ante ${fmtR(mOpex.mOrc)} orçados (Δ ${fmtR(mOpex.mDelta)}) e o EBITDA fechou em ${fmtR(mEbitda.mReal)} vs. ${fmtR(mEbitda.mOrc)} orçados (Δ ${fmtR(mEbitda.mDelta)}).`,
+      `Receita BAU acumulada de ${fmtR(bauRev.yReal)} (Δ ${fmtR(bauRev.yDelta)} vs. orçado de ${fmtR(bauRev.yOrc)}), pressionada por menor performance da NIO (${fmtR(anchor.yDelta)}), Other Tenants (${fmtR(otherTenants.yDelta)}), efeitos cambiais/go-in no Wholesale (${fmtR(wholesale.yDelta)}) e renegociações em Swaps/IRU (${fmtR(otherRev.yDelta)}).`,
+      `Projetos especiais (IPv4 e venda de imóveis) geraram ${fmtR(projTotal.yReal)} de EBITDA no ano, ${fmtR(projTotal.yDelta)} vs. orçado (${fmtR(projTotal.yOrc)}).`,
+    ],
+    ytdBauBullets: [
+      `Receita Líquida ${fmtR(bauRev.yReal)} (Δ orçado ${fmtR(bauRev.yDelta)}): ${fmtR(anchor.yDelta)} NIO — impactado por menor base de HCs e Connection Fee (${fmtR(anchorConn.yDelta)}), parcialmente compensado por ${fmtR(anchorTax.yReal)} de tax credits (benefício Alagoas); ${fmtR(otherTenants.yDelta)} Other Tenants — mix mais concentrado em TIM (menor preço subsidiado); ${fmtR(wholesale.yDelta)} Wholesale — câmbio e go-in de performance, parcialmente compensados por faturamento retroativo em National Connectivity.`,
+      `OPEX ${fmtR(bauOpex.yReal)} (Δ orçado ${fmtR(bauOpex.yDelta)}): ${fmtR(maint.yDelta)} Maintenance — reembolsos por rompimento de cabo submarino, recalendarização corretiva do CLS e Inventory Management; ${fmtR(passive.yDelta)} Passive Network Infra — Real Estate, IFRS16 (postes e dark fiber) e energia (haircut + venda de energia); ${fmtR(swaps.yDelta)} Swap — revisão dos contratos Vivo e TIM; ${fmtR(hr.yDelta)} HR — saving em headcount; ${fmtR(sga.yDelta)} SG&A — legal (despesas com Oi), parcialmente compensado por marketing; ${fmtR(others.yDelta)} Others — Tax (reclassificação, projeto de importação, VCI Tax) e PDD.`,
+    ],
+    revenueDetailBullets: [
+      `Anchor ${fmtR(anchor.yDelta)}: ${fmtR(anchorConn.yDelta)} Connection Fee (gross abaixo do esperado) e ${fmtR(anchorOther.yDelta)} Others, parcialmente compensados por ${fmtR(anchorTax.yReal)} de tax credits (benefício Alagoas).`,
+      `Other Tenants ${fmtR(otherTenants.yDelta)}: mix mais concentrado em TIM (menor preço subsidiado), compensado parcialmente por mensalidade.`,
+      `Wholesale ${fmtR(wholesale.yDelta)}: câmbio e International Connectivity, parcialmente compensados por faturamento retroativo em National Connectivity e por Oi B2B.`,
+      `Other Revenue ${fmtR(otherRev.yDelta)}: renegociação com Telefônica e TIM — redução de pares de fibra nas rotas do 4º e 5º contratos e nos trechos do 1º e 2º contratos de swap com a TIM.`,
+    ],
+    newBusinessBullets: [
+      `B2B: estrutura de governança não realizada / custo de RH; não execução de temas de BPO.`,
+      `Um Telecom: timing da incorporação, prevista no orçamento a partir de janeiro; incorporação esperada no 4º trimestre devido a negociações estratégicas referentes a novos contratos, com potencial de incremento de EBITDA de aprox. R$150mn/ano.`,
+      `Mobile Solutions: entrega do 1º shopping no modelo smart venue (Shopping Partage, Brasília), com 150 lojas e ~30 links já ativados; B2B já captura mais de 50% da demanda de circuitos. FCUs voltam a acelerar, com destaque para 11 venues grandes para a TIM e avanço na Linha 6 do Metrô de São Paulo.`,
+    ],
+    projectsFootnote: `¹ Inclui Copper ${fmtR(projCopper.yReal)} — finalização das vendas, com 140 toneladas para Rerum e GMI em fev/26; pequena parcela de descontos retroativos de notas fiscais da IBRAME.`,
+    projectsBullets: [
+      `IPv4: principais clientes Google, Hostinger, Ding Feng, Mercado Livre e SpaceX, com ticket médio de US$10.`,
+      `Venda de Prédios: 14 prédios vendidos até ${monthName.toLowerCase()} (8 no 1T, 2 em abr, 1 em mai, 3 em jul), somando ${fmtR(projBuildings.yReal)} ante ${fmtR(projBuildings.yOrc)} orçados (Δ ${fmtR(projBuildings.yDelta)}); 15 imóveis adicionais previstos para o 2º semestre (R$30mn).`,
+    ],
+  };
+}
+
+/**
+ * Constrói dinamicamente a narrativa executiva da Tecto com base nos números reais do BigQuery e nas justificativas do GCP da competência selecionada
+ */
+function buildDynamicTectoNarrative(params: {
+  period: string;
+  financialRows: FinancialReportRow[];
+  physicalRows: PhysicalReportRow[];
+  justifications: Record<string, unknown>;
+}): TectoExecutiveNarrative {
+  const { period, financialRows } = params;
+  const { monthName, year } = parsePeriodInfo(period);
+
+  const sum = (pred: (r: FinancialReportRow) => boolean) => {
+    let mOrc = 0, mReal = 0, yOrc = 0, yReal = 0;
+    for (const r of financialRows) {
+      if (pred(r)) {
+        mOrc += r.budgetCurrent / 1_000_000;
+        mReal += r.realCurrent / 1_000_000;
+        yOrc += r.budgetYtd / 1_000_000;
+        yReal += r.realYtd / 1_000_000;
+      }
+    }
+    return { mOrc, mReal, mDelta: mReal - mOrc, yOrc, yReal, yDelta: yReal - yOrc };
+  };
+
+  const coloc = sum((r) => r.level3 === 'Colocation' || r.classification.toLowerCase().includes('colocation'));
+  const power = sum((r) => r.classification.toLowerCase().includes('power'));
+  const maint = sum((r) => r.classification.toLowerCase().includes('maintenance'));
+  const fac = sum((r) => r.classification.toLowerCase().includes('facilities'));
+  const hr = sum((r) => r.level3 === 'HR');
+  const sga = sum((r) => r.level3 === 'SG&A');
+  const consult = sum((r) => r.classification.toLowerCase().includes('consultorias'));
+  const legal = sum((r) => r.level3 === 'SG&A' && r.classification.toLowerCase().includes('legal'));
+  const travel = sum((r) => r.classification.toLowerCase().includes('travel'));
+  const others = sum((r) => r.level3 === 'Others');
+  const opex = sum((r) => r.level3 !== 'Colocation' && !r.classification.toLowerCase().includes('colocation'));
+  const ebitda = {
+    mOrc: coloc.mOrc + opex.mOrc,
+    mReal: coloc.mReal + opex.mReal,
+    mDelta: coloc.mDelta + opex.mDelta,
+    yOrc: coloc.yOrc + opex.yOrc,
+    yReal: coloc.yReal + opex.yReal,
+    yDelta: coloc.yDelta + opex.yDelta,
+  };
+
+  return {
+    highlights: [
+      `Receita Líquida de Colocation atingiu ${fmtR(coloc.yReal)} no acumulado até ${monthName}/${year} (${fmtR(coloc.mReal)} no mês de ${monthName}), consolidando a rampa comercial de ocupação e ativação de contratos nos Data Centers.`,
+      `OPEX acumulado de ${fmtR(opex.yReal)} ante ${fmtR(opex.yOrc)} orçados (Δ ${fmtR(opex.yDelta)}), impactado principalmente por Power Costs (${fmtR(power.yDelta)} de desvio YTD pelo descasamento temporário de reembolso de energia entre Tecto I e Tecto II).`,
+      `No mês de ${monthName}/${year}, o OPEX totalizou ${fmtR(opex.mReal)} vs. ${fmtR(opex.mOrc)} orçados (Δ ${fmtR(opex.mDelta)}) e o EBITDA fechou em ${fmtR(ebitda.mReal)} (${fmtR(ebitda.yReal)} no YTD).`,
+      `Eficiência em custos operacionais de manutenção predial e infraestrutura (saving de ${fmtR(maint.yDelta)} em Maintenance/Materials e ${fmtR(fac.yDelta)} em Facilities & Utilities no YTD), compensando parcialmente investimentos em expansão (ZPE e frente comercial China).`,
+    ],
+    ytdBauBullets: [
+      `Receita Líquida ${fmtR(coloc.yReal)} (Realizado YTD até ${monthName}/${year} | ${fmtR(coloc.mReal)} no mês): faturamento integralmente concentrado em serviços de Colocation e Cross-Connects nos sites operacionais.`,
+      `OPEX ${fmtR(opex.yReal)} (Δ orçado ${fmtR(opex.yDelta)}): ${fmtR(power.yDelta)} Power Costs — gap temporal pelo reembolso de energia no período entre Tecto I e Tecto II; ${fmtR(maint.yDelta + fac.yDelta)} de economia combinada em Maintenance & Materials e Facilities (apesar de gastos de aluguel da ZPE não orçados); ${fmtR(hr.yDelta)} HR — pessoal de operação e engenharia (O&E Personnel) e Cost Sharing; ${fmtR(sga.yDelta)} SG&A — consultorias especializadas para ZPE (permits e energia), jurídico e viagens comerciais (iniciativa China); ${fmtR(others.yDelta)} Others — reflexo de PDD relacionada à mudança de titularidade de contratos.`,
+    ],
+    opexDetailBullets: [
+      `Power Costs ${fmtR(power.yDelta)} YTD (${fmtR(power.mDelta)} em ${monthName}): variação concentrada no efeito temporal de reembolso de energia elétrica entre as plantas Tecto I e Tecto II.`,
+      `Maintenance, Facilities & ZPE ${fmtR(maint.yDelta + fac.yDelta)} YTD: economia em materiais e manutenção corretiva compensando os gastos referentes ao aluguel da ZPE não previstos no orçamento original.`,
+      `SG&A ${fmtR(sga.yDelta)} YTD: ${fmtR(consult.yDelta)} em Consultorias (projetos de permits e energia para a ZPE), ${fmtR(legal.yDelta)} em Legal (efeito timing na distribuição do orçamento e Cost Sharing) e ${fmtR(travel.yDelta)} em Viagens (agenda comercial e iniciativa China com foco em redução de CAPEX).`,
+      `Others & PDD ${fmtR(others.yDelta)} YTD: provisão para devedores duvidosos (PDD) em tratativa pelo time de CAR, decorrente do processo de transferência de titularidade da V.tal para a Tecto.`,
+    ],
+  };
+}
+
+/**
+ * Constrói dinamicamente a narrativa executiva da NIO com base nos números reais do BigQuery e nas justificativas do GCP da competência selecionada
+ */
+function buildDynamicNioNarrative(params: {
+  period: string;
+  financialRows: FinancialReportRow[];
+  physicalRows: PhysicalReportRow[];
+  justifications: Record<string, unknown>;
+}): NioExecutiveNarrative {
+  if (params.period === '2026/8' || params.financialRows.length === 0) {
+    return DEFAULT_NIO_NARRATIVE;
+  }
+  const { monthLower, fullLabel } = parsePeriodInfo(params.period);
+  const sum = (pred: (r: FinancialReportRow) => boolean) => {
+    let mOrc = 0, mReal = 0, yOrc = 0, yReal = 0;
+    for (const r of params.financialRows) {
+      if (pred(r)) {
+        mOrc += r.budgetCurrent / 1_000_000;
+        mReal += r.realCurrent / 1_000_000;
+        yOrc += r.budgetYtd / 1_000_000;
+        yReal += r.realYtd / 1_000_000;
+      }
+    }
+    return { mOrc, mReal, mDelta: mReal - mOrc, yOrc, yReal, yDelta: yReal - yOrc };
+  };
+
+  const rev = sum((r) => (r.level1 || '').toLowerCase().includes('revenue') || r.level3.toLowerCase().includes('receita'));
+  const opex = sum((r) => !(r.level1 || '').toLowerCase().includes('revenue') && !r.level3.toLowerCase().includes('receita'));
+  const ebitda = {
+    mOrc: rev.mOrc + opex.mOrc,
+    mReal: rev.mReal + opex.mReal,
+    mDelta: rev.mDelta + opex.mDelta,
+    yOrc: rev.yOrc + opex.yOrc,
+    yReal: rev.yReal + opex.yReal,
+    yDelta: rev.yDelta + opex.yDelta,
+  };
+
+  return {
+    ...DEFAULT_NIO_NARRATIVE,
+    executiveSummary: `A NIO fechou ${monthLower} (${fullLabel}) com EBITDA de ${fmtRDec(ebitda.mReal)} (orçado ${fmtRDec(ebitda.mOrc)}, Δ ${fmtRDec(ebitda.mDelta)}). A Receita Líquida realizou ${fmtRDec(rev.mReal)} ante ${fmtRDec(rev.mOrc)} orçados (Δ ${fmtRDec(rev.mDelta)}) e os Custos e Despesas somaram ${fmtRDec(opex.mReal)} vs ${fmtRDec(opex.mOrc)} orçados (Δ ${fmtRDec(opex.mDelta)}). No acumulado (YTD), a Receita Líquida atingiu ${fmtRDec(rev.yReal)} (Δ ${fmtRDec(rev.yDelta)}) e o EBITDA acumula ${fmtRDec(ebitda.yReal)} contra ${fmtRDec(ebitda.yOrc)} orçados (Δ ${fmtRDec(ebitda.yDelta)}).`,
+  };
+}
+
+/**
+ * Consulta a IA do Gemini para gerar/enriquecer as análises executivas da NIO
  */
 export async function generateNioNarrativeWithGemini(params: {
   period: string;
@@ -110,26 +653,13 @@ export async function generateNioNarrativeWithGemini(params: {
   physicalRows: PhysicalReportRow[];
   justifications: Record<string, unknown>;
 }): Promise<NioExecutiveNarrative> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.log('[Gemini Narrative] GEMINI_API_KEY não definida, usando conteúdo oficial padrão.');
-    return DEFAULT_NIO_NARRATIVE;
-  }
+  const dynamicBase = buildDynamicNioNarrative(params);
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    
-    // Resumo dos dados para injetar no prompt
-    const sampleFinancial = params.financialRows.slice(0, 20).map((r) => ({
-      classificacao: r.classification,
-      area: r.area,
-      realMes: r.realCurrent / 1_000_000,
-      orcadoMes: r.budgetCurrent / 1_000_000,
-      desvioMes: (r.realCurrent - r.budgetCurrent) / 1_000_000,
-      realYtd: r.realYtd / 1_000_000,
-      orcadoYtd: r.budgetYtd / 1_000_000,
-    }));
-
+    const summarizedJustifications = summarizeJustificationsForPrompt(
+      params.financialRows,
+      params.justifications
+    );
     const samplePhysical = params.physicalRows.map((r) => ({
       indicador: r.indicator,
       real: r.real,
@@ -138,87 +668,173 @@ export async function generateNioNarrativeWithGemini(params: {
     }));
 
     const prompt = `
+IMPORTANTE: NÃO execute consultas SQL no BigQuery nem utilize ferramentas externas. Todos os dados já estão consolidados abaixo. Responda IMEDIATAMENTE apenas com o objeto JSON válido.
+
 Você é o Diretor Executivo de FP&A do Grupo V.tal e da NIO Fibra.
 Sua missão é redigir o "Documento de Leitura Executiva - Reunião de Performance de Resultados" da NIO Fibra para a competência ${params.period}.
-O documento oficial segue rigorosamente a estrutura, o tom executivo e os tópicos do modelo da NIO.
+O documento oficial segue rigorosamente a estrutura, o tom executivo direto e os tópicos do modelo da NIO.
 
-DADOS DE REFERÊNCIA DE FP&A:
-- Linhas financeiras (amostra em R$ Mn): ${JSON.stringify(sampleFinancial)}
-- Indicadores físicos: ${JSON.stringify(samplePhysical)}
-- Justificativas extraídas do GCP: ${JSON.stringify(params.justifications).slice(0, 3000)}
+DADOS REAIS DO BIGQUERY E JUSTIFICATIVAS DO GCP PARA A COMPETÊNCIA ${params.period} (em R$ milhões):
+- Linhas financeiras e justificativas: ${JSON.stringify(summarizedJustifications)}
+- Indicadores físicos (Base EOP, Net Adds, Gross Adds, Churn): ${JSON.stringify(samplePhysical)}
+- Síntese base calculada para ${params.period}: ${JSON.stringify(dynamicBase)}
 
-Gere uma resposta em JSON estritamente válido contendo todos os campos do modelo:
-{
-  "executiveSummary": "Parágrafo síntese executivo com EBITDA realizado vs orçado, principais desvios de receita, custos e CAC, além do YTD.",
-  "keyMessages": [
-    "Bullet 1 sobre Receita e desvio de base/ARPU",
-    "Bullet 2 sobre evolução da Base e M&A",
-    "Bullet 3 sobre Churn voluntário vs involuntário",
-    "Bullet 4 sobre Custo de servir e canais de atendimento",
-    "Bullet 5 sobre CAC e efeito volume",
-    "Bullet 6 sobre YTD sustentado por créditos não recorrentes"
-  ],
-  "monthReading": "Parágrafo aprofundado da Leitura do Mês de P&L e EBITDA",
-  "ytdReading": "Parágrafo aprofundado da Leitura do YTD com detalhamento de não recorrentes",
-  "kpisAnalysis": {
-    "baseAndNetAdds": "Texto executivo sobre Base EOP e Net Adds",
-    "grossAddsAndSales": "Texto executivo sobre Gross Adds e Venda Bruta",
-    "churn": "Texto executivo sobre Churn voluntário, involuntário e safras",
-    "organicVision": "Texto executivo sobre a Visão Orgânica (ex-M&A) e canais"
-  },
-  "revenueAnalysis": {
-    "netRevenueBullets": [
-      "Vs mês anterior...",
-      "Vs orçado..."
-    ],
-    "arpuBullets": [
-      "Vs mês anterior...",
-      "Vs orçado...",
-      "Mix do gross..."
-    ]
-  },
-  "costsAnalysis": {
-    "relRevenueBullets": ["Mês...", "YTD..."],
-    "costToServeBullets": ["Mês...", "YTD..."],
-    "adminBullets": ["Mês...", "YTD..."],
-    "cacBullets": ["Mês...", "YTD..."],
-    "oneOffsBullets": ["Mês...", "YTD..."]
-  },
-  "cacUnitaryAnalysis": {
-    "unitaryIntro": "Texto sobre a subida do unitário de vendas ex-M&A por canal",
-    "channelReading": "Leitura por canal detalhada",
-    "commissionsAndDeferral": "Texto sobre comissões brutas e diferimento"
-  }
-}
+Gere uma resposta em JSON estritamente válido mantendo o mesmo nível de profundidade numérica, concisão executiva e estrutura de campos da síntese base, utilizando EXCLUSIVAMENTE os números reais da competência ${params.period}.
 Responda EXCLUSIVAMENTE o objeto JSON.
 `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
-
-    const text = response.text?.trim();
-    if (text) {
-      const parsed = JSON.parse(text) as NioExecutiveNarrative;
-      if (parsed.executiveSummary && parsed.keyMessages?.length) {
-        console.log('[Gemini Narrative] Análise executiva gerada com sucesso pelo Gemini!');
-        return {
-          ...DEFAULT_NIO_NARRATIVE,
-          ...parsed,
-          kpisAnalysis: { ...DEFAULT_NIO_NARRATIVE.kpisAnalysis, ...parsed.kpisAnalysis },
-          revenueAnalysis: { ...DEFAULT_NIO_NARRATIVE.revenueAnalysis, ...parsed.revenueAnalysis },
-          costsAnalysis: { ...DEFAULT_NIO_NARRATIVE.costsAnalysis, ...parsed.costsAnalysis },
-          cacUnitaryAnalysis: { ...DEFAULT_NIO_NARRATIVE.cacUnitaryAnalysis, ...parsed.cacUnitaryAnalysis },
-        };
-      }
+    const parsed = await callGeminiExecutiveJson<NioExecutiveNarrative>(prompt, `NIO-${params.period}`);
+    if (parsed && parsed.executiveSummary && parsed.keyMessages?.length) {
+      return {
+        ...dynamicBase,
+        ...parsed,
+        kpisAnalysis: { ...dynamicBase.kpisAnalysis, ...parsed.kpisAnalysis },
+        revenueAnalysis: { ...dynamicBase.revenueAnalysis, ...parsed.revenueAnalysis },
+        costsAnalysis: { ...dynamicBase.costsAnalysis, ...parsed.costsAnalysis },
+        cacUnitaryAnalysis: { ...dynamicBase.cacUnitaryAnalysis, ...parsed.cacUnitaryAnalysis },
+      };
     }
-  } catch (error) {
-    console.warn('[Gemini Narrative] Erro ao consultar modelo, usando padrão de referência oficial:', error);
+  } catch {
+    console.log('[Gemini Narrative NIO] Usando síntese executiva consolidada do período.');
   }
 
-  return DEFAULT_NIO_NARRATIVE;
+  return dynamicBase;
+}
+
+/**
+ * Consulta a IA do Gemini para gerar/enriquecer as análises executivas da V.tal (modelo HOLDING · V.tal)
+ */
+export async function generateVtalNarrativeWithGemini(params: {
+  period: string;
+  financialRows: FinancialReportRow[];
+  physicalRows: PhysicalReportRow[];
+  justifications: Record<string, unknown>;
+}): Promise<VtalExecutiveNarrative> {
+  const dynamicBase = buildDynamicVtalNarrative(params);
+
+  try {
+    const summarizedJustifications = summarizeJustificationsForPrompt(
+      params.financialRows,
+      params.justifications
+    );
+    const samplePhysical = params.physicalRows.map((r) => ({
+      indicador: r.indicator,
+      real: r.real,
+      orcado: r.budget,
+      desvio: r.real - r.budget,
+    }));
+
+    const prompt = `
+IMPORTANTE: NÃO execute consultas SQL no BigQuery nem utilize ferramentas externas. Todos os dados já estão consolidados abaixo. Responda IMEDIATAMENTE apenas com o objeto JSON válido.
+
+Você é o Diretor Executivo de FP&A da Holding V.tal.
+Sua missão é redigir os textos analíticos do documento executivo "HOLDING · V.tal — Performance de Resultados" para a competência ${params.period}, seguindo rigorosamente o modelo executivo oficial da V.tal.
+
+SÍNTESE EXECUTIVA DE REFERÊNCIA (MODELO OFICIAL CALIBRADO COM OS NÚMEROS DE ${params.period}):
+${JSON.stringify(dynamicBase)}
+
+JUSTIFICATIVAS COMPLEMENTARES DOS ANALISTAS NO PERÍODO:
+${JSON.stringify(summarizedJustifications)}
+
+INDICADORES FÍSICOS:
+${JSON.stringify(samplePhysical)}
+
+Regras obrigatórias:
+1. Use SEMPRE os números reais da competência ${params.period} presentes na Síntese Executiva de Referência acima.
+2. NUNCA acumule todas as justificativas mensais (mai/jun/jul/ago) nem concatene comentários brutos entre colchetes.
+3. Leia e interprete as justificativas dos analistas e consolide apenas o que for mais valioso em formato de resumo executivo curto e direto, usando como referência principal a descrição executiva já existente na Síntese Executiva de Referência (especialmente em "Resultado Acumulado (YTD) — BAU" e "Detalhamento da Receita (YTD)").
+4. Retorne EXCLUSIVAMENTE um JSON válido com as chaves:
+{
+  "highlights": ["4 bullets executivos de Destaques da página 1"],
+  "ytdBauBullets": ["Bullet 1 executivo conciso de Receita Líquida...", "Bullet 2 executivo conciso de OPEX..."],
+  "revenueDetailBullets": ["Bullet 1: Anchor...", "Bullet 2: Other Tenants...", "Bullet 3: Wholesale...", "Bullet 4: Other Revenue..."],
+  "newBusinessBullets": ["Bullet 1: B2B...", "Bullet 2: Um Telecom...", "Bullet 3: Mobile Solutions..."],
+  "projectsFootnote": "Nota de rodapé ¹ sobre Copper...",
+  "projectsBullets": ["Bullet 1: IPv4...", "Bullet 2: Venda de Prédios..."]
+}
+`;
+
+    const parsed = await callGeminiExecutiveJson<VtalExecutiveNarrative>(prompt, `Vtal-${params.period}`);
+    if (parsed && parsed.highlights?.length && parsed.ytdBauBullets?.length) {
+      return {
+        highlights: pickExecutiveBullets(parsed.highlights, dynamicBase.highlights),
+        ytdBauBullets: pickExecutiveBullets(parsed.ytdBauBullets, dynamicBase.ytdBauBullets),
+        revenueDetailBullets: pickExecutiveBullets(parsed.revenueDetailBullets, dynamicBase.revenueDetailBullets),
+        newBusinessBullets: pickExecutiveBullets(parsed.newBusinessBullets, dynamicBase.newBusinessBullets),
+        projectsFootnote:
+          parsed.projectsFootnote && isCleanExecutiveBullet(parsed.projectsFootnote)
+            ? parsed.projectsFootnote
+            : dynamicBase.projectsFootnote,
+        projectsBullets: pickExecutiveBullets(parsed.projectsBullets, dynamicBase.projectsBullets),
+      };
+    }
+  } catch {
+    console.log('[Gemini Narrative V.tal] Usando síntese executiva consolidada do período.');
+  }
+
+  return dynamicBase;
+}
+
+/**
+ * Consulta a IA do Gemini para gerar/enriquecer as análises executivas da Tecto (modelo HOLDING · Tecto)
+ */
+export async function generateTectoNarrativeWithGemini(params: {
+  period: string;
+  financialRows: FinancialReportRow[];
+  physicalRows: PhysicalReportRow[];
+  justifications: Record<string, unknown>;
+}): Promise<TectoExecutiveNarrative> {
+  const dynamicBase = buildDynamicTectoNarrative(params);
+
+  try {
+    const summarizedJustifications = summarizeJustificationsForPrompt(
+      params.financialRows,
+      params.justifications
+    );
+    const samplePhysical = params.physicalRows.map((r) => ({
+      indicador: r.indicator,
+      real: r.real,
+      orcado: r.budget,
+      desvio: r.real - r.budget,
+    }));
+
+    const prompt = `
+IMPORTANTE: NÃO execute consultas SQL no BigQuery nem utilize ferramentas externas. Todos os dados já estão consolidados abaixo. Responda IMEDIATAMENTE apenas com o objeto JSON válido.
+
+Você é o Diretor Executivo de FP&A da Holding V.tal / Tecto Data Centers.
+Sua missão é redigir os textos analíticos do documento executivo "HOLDING · Tecto — Performance de Resultados" para a competência ${params.period}, seguindo exatamente o padrão executivo conciso do relatório da Holding.
+
+SÍNTESE EXECUTIVA DE REFERÊNCIA (MODELO OFICIAL CALIBRADO COM OS NÚMEROS DE ${params.period}):
+${JSON.stringify(dynamicBase)}
+
+JUSTIFICATIVAS COMPLEMENTARES DOS ANALISTAS NO PERÍODO:
+${JSON.stringify(summarizedJustifications)}
+
+INDICADORES FÍSICOS DATA CENTERS:
+${JSON.stringify(samplePhysical)}
+
+Regras obrigatórias:
+1. Use SEMPRE os números reais da competência ${params.period} presentes na Síntese Executiva de Referência acima.
+2. NUNCA acumule todas as justificativas mensais nem concatene comentários brutos entre colchetes. Mantenha o resumo executivo conciso conforme o modelo de referência.
+3. Retorne EXCLUSIVAMENTE um JSON válido com as chaves:
+{
+  "highlights": ["4 bullets executivos de Destaques da Tecto"],
+  "ytdBauBullets": ["Bullet 1: Receita Líquida...", "Bullet 2: OPEX..."],
+  "opexDetailBullets": ["Bullet 1: Power Costs...", "Bullet 2: Maintenance, Facilities & ZPE...", "Bullet 3: SG&A...", "Bullet 4: Others & PDD..."]
+}
+`;
+
+    const parsed = await callGeminiExecutiveJson<TectoExecutiveNarrative>(prompt, `Tecto-${params.period}`);
+    if (parsed && parsed.highlights?.length && parsed.ytdBauBullets?.length) {
+      return {
+        highlights: pickExecutiveBullets(parsed.highlights, dynamicBase.highlights),
+        ytdBauBullets: pickExecutiveBullets(parsed.ytdBauBullets, dynamicBase.ytdBauBullets),
+        opexDetailBullets: pickExecutiveBullets(parsed.opexDetailBullets, dynamicBase.opexDetailBullets),
+      };
+    }
+  } catch {
+    console.log('[Gemini Narrative Tecto] Usando síntese executiva consolidada do período.');
+  }
+
+  return dynamicBase;
 }

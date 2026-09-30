@@ -97,7 +97,6 @@ export interface NioPageData {
     isBold?: boolean;
   }>;
 }
-
 export const NIO_AGO26_DATA: NioPageData = {
   summaryKpis: [
     { indicador: 'Base EOP (mil)', real: '3.312', orcado: '3.430', delta: '-117 (-3,4%)', referencia: '-6 vs forecast', isNegative: true },
@@ -193,3 +192,153 @@ export const NIO_AGO26_DATA: NioPageData = {
     { linha: 'Custos com pessoal', mesReal: '17,9', mesOrc: '18,4', mesDelta: '(0,5)', ytdReal: '131,9', ytdOrc: '145,5', ytdDelta: '(13,7)', isBold: true },
   ],
 };
+
+function fmtDec1(valMn: number, dashZero = true): string {
+  if (Math.abs(valMn) < 0.05) return dashZero ? '-' : '0,0';
+  const absStr = Math.abs(valMn).toLocaleString('pt-BR', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  return valMn < 0 ? `(${absStr})` : absStr;
+}
+
+export function buildNioDynamicPageData(params: {
+  period: string;
+  financialRows?: Array<{
+    classification: string;
+    level1?: string;
+    level2?: string;
+    level3: string;
+    realCurrent: number;
+    budgetCurrent: number;
+    realYtd: number;
+    budgetYtd: number;
+  }>;
+  physicalRows?: Array<{
+    indicator: string;
+    real: number;
+    budget: number;
+  }>;
+}): NioPageData {
+  const { period, financialRows = [] } = params;
+  if (period === '2026/8' || financialRows.length === 0) {
+    return NIO_AGO26_DATA;
+  }
+
+  const sumBy = (pred: (r: (typeof financialRows)[number]) => boolean) => {
+    let mR = 0, mO = 0, yR = 0, yO = 0;
+    for (const r of financialRows) {
+      if (pred(r)) {
+        mR += r.realCurrent / 1_000_000;
+        mO += r.budgetCurrent / 1_000_000;
+        yR += r.realYtd / 1_000_000;
+        yO += r.budgetYtd / 1_000_000;
+      }
+    }
+    return { mR, mO, mD: mR - mO, yR, yO, yD: yR - yO };
+  };
+
+  const rev = sumBy((r) => (r.level1 || '').toLowerCase().includes('revenue') || r.level3.toLowerCase().includes('receita'));
+  // Custos são negativos no banco; na tabela NIO aparecem com sinal invertido (positivo para despesa)
+  const relRevRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('relacionados') || (r.level2 || '').toLowerCase().includes('cogs'));
+  const serveRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('servir'));
+  const admRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('administrativo'));
+  const cacRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('aquisi') || (r.level2 || '').toLowerCase().includes('cac'));
+  const oneOffRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('one-off') || (r.level2 || '').toLowerCase().includes('one off'));
+  const hrRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('pessoal') || (r.level3 || '').toLowerCase().includes('pessoal'));
+
+  const inv = (p: { mR: number; mO: number; yR: number; yO: number }) => ({
+    mR: -p.mR,
+    mO: -p.mO,
+    mD: -p.mR - -p.mO,
+    yR: -p.yR,
+    yO: -p.yO,
+    yD: -p.yR - -p.yO,
+  });
+
+  const cRel = inv(relRevRaw);
+  const cServe = inv(serveRaw);
+  const cAdm = inv(admRaw);
+  const cCac = inv(cacRaw);
+  const cOneOff = inv(oneOffRaw);
+  const cHr = inv(hrRaw);
+
+  const mDir = {
+    mR: rev.mR - cRel.mR,
+    mO: rev.mO - cRel.mO,
+    mD: rev.mR - cRel.mR - (rev.mO - cRel.mO),
+    yR: rev.yR - cRel.yR,
+    yO: rev.yO - cRel.yO,
+    yD: rev.yR - cRel.yR - (rev.yO - cRel.yO),
+  };
+  const mOp = {
+    mR: mDir.mR - cServe.mR,
+    mO: mDir.mO - cServe.mO,
+    mD: mDir.mR - cServe.mR - (mDir.mO - cServe.mO),
+    yR: mDir.yR - cServe.yR,
+    yO: mDir.yO - cServe.yO,
+    yD: mDir.yR - cServe.yR - (mDir.yO - cServe.yO),
+  };
+  const allRows = sumBy(() => true);
+  const mMarginR = Math.abs(rev.mR) > 0.1 ? (allRows.mR / rev.mR) * 100 : 0;
+  const mMarginO = Math.abs(rev.mO) > 0.1 ? (allRows.mO / rev.mO) * 100 : 0;
+  const yMarginR = Math.abs(rev.yR) > 0.1 ? (allRows.yR / rev.yR) * 100 : 0;
+  const yMarginO = Math.abs(rev.yO) > 0.1 ? (allRows.yO / rev.yO) * 100 : 0;
+
+  const mkPl = (label: string, p: { mR: number; mO: number; mD: number; yR: number; yO: number; yD: number }, isBold = false, isSubtotal = false) => ({
+    label,
+    mesReal: fmtDec1(p.mR, false),
+    mesOrc: fmtDec1(p.mO, false),
+    mesDelta: fmtDec1(p.mD, false),
+    ytdReal: fmtDec1(p.yR, false),
+    ytdOrc: fmtDec1(p.yO, false),
+    ytdDelta: fmtDec1(p.yD, false),
+    isBold,
+    isSubtotal,
+  });
+
+  return {
+    ...NIO_AGO26_DATA,
+    summaryKpis: [
+      ...NIO_AGO26_DATA.summaryKpis.slice(0, 5),
+      {
+        indicador: 'Receita líquida',
+        real: fmtDec1(rev.mR, false),
+        orcado: fmtDec1(rev.mO, false),
+        delta: `${fmtDec1(rev.mD, false)}`,
+        referencia: `YTD ${fmtDec1(rev.yR, false)}`,
+        isNegative: rev.mD < 0,
+      },
+      {
+        indicador: 'EBITDA',
+        real: fmtDec1(allRows.mR, false),
+        orcado: fmtDec1(allRows.mO, false),
+        delta: `${fmtDec1(allRows.mD, false)}`,
+        referencia: `YTD ${fmtDec1(allRows.yR, false)} vs ${fmtDec1(allRows.yO, false)} orçado`,
+        isNegative: allRows.mD < 0,
+      },
+    ],
+    plRows: [
+      mkPl('Receita líquida', rev, true, false),
+      mkPl('(-) Custos relacionados à receita', cRel),
+      mkPl('Margem direta', mDir, true, true),
+      mkPl('(-) Custo de servir', cServe),
+      mkPl('Margem operacional', mOp, true, true),
+      mkPl('(-) Custos administrativos', cAdm),
+      mkPl('(-) Custo de aquisição (CAC)', cCac),
+      mkPl('(-) One-offs', cOneOff),
+      mkPl('(-) Custos com pessoal', cHr),
+      mkPl('EBITDA', allRows, true, true),
+      {
+        label: 'Margem EBITDA',
+        mesReal: `${mMarginR.toFixed(1).replace('.', ',')}%`,
+        mesOrc: `${mMarginO.toFixed(1).replace('.', ',')}%`,
+        mesDelta: `${(mMarginR - mMarginO).toFixed(1).replace('.', ',')}pp`,
+        ytdReal: `${yMarginR.toFixed(1).replace('.', ',')}%`,
+        ytdOrc: `${yMarginO.toFixed(1).replace('.', ',')}%`,
+        ytdDelta: `${(yMarginR - yMarginO).toFixed(1).replace('.', ',')}pp`,
+        isBold: true,
+      },
+    ],
+  };
+}

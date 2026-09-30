@@ -17,8 +17,13 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
-import { generateNioNarrativeWithGemini } from './geminiExecutiveReport';
+import {
+  generateNioNarrativeWithGemini,
+  generateVtalNarrativeWithGemini,
+  generateTectoNarrativeWithGemini,
+} from './geminiExecutiveReport';
 import { buildNioExecutiveDocx } from './nioDocBuilder';
+import { buildVtalExecutiveDocx, buildTectoExecutiveDocx } from './vtalTectoDocBuilder';
 
 export type ReportCompanyId = 'nio' | 'vtal' | 'tecto';
 
@@ -26,6 +31,9 @@ export interface FinancialReportRow {
   id: string;
   classification: string;
   area: string;
+  level0?: string;
+  level1?: string;
+  level2?: string;
   level3: string;
   level4: string;
   realCurrent: number;
@@ -211,12 +219,48 @@ export async function generateExecutiveWordReport(input: WordReportInput): Promi
     });
     return buildNioExecutiveDocx({
       period: input.period,
+      financialRows: input.financialRows,
+      physicalRows: input.physicalRows,
       narrative,
       logoBuffer: input.logo,
     });
   }
 
-  const company = COMPANY[input.companyId];
+  // Para a V.tal, gera o documento executivo HOLDING · V.tal idêntico ao modelo em anexo com síntese do Gemini
+  if (input.companyId === 'vtal') {
+    const narrative = await generateVtalNarrativeWithGemini({
+      period: input.period,
+      financialRows: input.financialRows,
+      physicalRows: input.physicalRows,
+      justifications: input.justifications as Record<string, unknown>,
+    });
+    return buildVtalExecutiveDocx({
+      period: input.period,
+      financialRows: input.financialRows,
+      physicalRows: input.physicalRows,
+      narrative,
+    });
+  }
+
+  // Para a Tecto, gera o documento executivo HOLDING · Tecto no mesmo padrão executivo com síntese do Gemini
+  if (input.companyId === 'tecto') {
+    const narrative = await generateTectoNarrativeWithGemini({
+      period: input.period,
+      financialRows: input.financialRows,
+      physicalRows: input.physicalRows,
+      justifications: input.justifications as Record<string, unknown>,
+    });
+    return buildTectoExecutiveDocx({
+      period: input.period,
+      financialRows: input.financialRows,
+      physicalRows: input.physicalRows,
+      narrative,
+    });
+  }
+
+  // A tipagem já considera os três retornos especializados acima. Mantemos o
+  // gerador legado abaixo como fallback defensivo para futuras empresas.
+  const company = COMPANY[input.companyId as ReportCompanyId];
   const label = periodLabel(input.period);
   const totals = input.financialRows.reduce((acc, row) => ({
     realCurrent: acc.realCurrent + row.realCurrent,

@@ -397,13 +397,17 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
 
       const hasN1 = colNames.includes('nio_n1');
       const hasN2 = colNames.includes('nio_n2');
+      const hasDiretoriaNio = colNames.includes('diretoria_nio');
+      const hasAreaNio = colNames.includes('area_nio');
       const n1Col = hasN1 ? 'COALESCE(NIO_N1, "Custos & Despesas")' : '"Custos & Despesas"';
       const n2Col = hasN2 ? 'COALESCE(NIO_N2, "Operacional")' : '"Operacional"';
+      const dirNioCol = hasDiretoriaNio ? "COALESCE(DIRETORIA_NIO, 'Diretoria Geral')" : "'Diretoria Geral'";
+      const areaNioCol = hasAreaNio ? "COALESCE(AREA_NIO, 'Área Geral')" : "COALESCE(AREA, 'Área Geral')";
 
       const nioQuery = `
         SELECT
-          TRIM(COALESCE(DIRETORIA_NIO, 'Diretoria Geral')) AS DIRETORIA_NIO,
-          TRIM(COALESCE(AREA_NIO, 'Área Geral')) AS AREA_NIO,
+          TRIM(${dirNioCol}) AS DIRETORIA_NIO,
+          TRIM(${areaNioCol}) AS AREA_NIO,
           ${respCol},
           TRIM(${n1Col}) AS NIO_N1,
           TRIM(${n2Col}) AS NIO_N2,
@@ -412,9 +416,8 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
           TRIM(CAST(TIPO AS STRING)) AS TIPO,
           ROUND(SUM(SAFE_CAST(valor AS FLOAT64)), 2) AS valor
         FROM ${fullTable}
-        WHERE DIRETORIA_NIO IS NOT NULL
-          AND AREA_NIO IS NOT NULL
-          AND NIO_N3 IS NOT NULL
+        WHERE NIO_N3 IS NOT NULL
+          AND TRIM(NIO_N3) NOT IN ('', '0', 'SEM_REGRA')
           AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
         GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
         ORDER BY NIO_N1, DIRETORIA_NIO, AREA_NIO, NIO_N3
@@ -1446,10 +1449,13 @@ const stableReportRowId = (parts: string[]) => {
 const reportValueKind = (value: unknown) => {
   const clean = String(value || '').toUpperCase().normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '');
+  if (clean.includes('ACTUAL2025') || clean.includes('FCST') || clean.includes('FORECAST')) return 'other';
   if (clean.includes('ACTUAL') || clean.includes('REAL') || clean === 'R' || clean.startsWith('ACT')) return 'real';
-  if (clean.includes('BUDGET') || clean.includes('ORCAD') || clean.includes('ORCAMENT') || clean.includes('PLAN') || clean.includes('META') || clean.includes('FORECAST') || clean === 'B' || clean.startsWith('ORC')) return 'budget';
+  if (clean.includes('BUDGET') || clean.includes('ORCAD') || clean.includes('ORCAMENT') || clean === 'B' || clean.startsWith('ORC')) return 'budget';
   return 'other';
 };
+
+const normalizeLookupText = (value: unknown) => String(value || '').trim().toLowerCase();
 
 async function loadReportJustifications(companyId: ReportCompanyId, period: string) {
   const cacheItem = await getCompanyEntriesFast(companyId, false);
@@ -1458,7 +1464,20 @@ async function loadReportJustifications(companyId: ReportCompanyId, period: stri
     if (!entry?.rowId) continue;
     const resolved = resolveEntryForPeriod(entry, period);
     if (resolved) {
-      result[String(entry.rowId)] = resolved as unknown as Record<string, unknown>;
+      const val = resolved as unknown as Record<string, unknown>;
+      result[String(entry.rowId)] = val;
+      const rMeta = entry.row as Record<string, unknown> | undefined;
+      const dir = normalizeLookupText(rMeta?.diretoria);
+      const area = normalizeLookupText(rMeta?.area);
+      const n2 = normalizeLookupText(rMeta?.nivel2);
+      const n3 = normalizeLookupText(rMeta?.n3 || entry.classification);
+      if (n3) {
+        if (dir && area && n2) result[`${dir}|${area}|${n2}|${n3}`] = val;
+        if (dir && area) result[`${dir}|${area}|${n3}`] = val;
+        if (area && n2) result[`${area}|${n2}|${n3}`] = val;
+        if (area) result[`${area}|${n3}`] = val;
+        if (!result[n3]) result[n3] = val;
+      }
     }
   }
   return result;
@@ -1494,18 +1513,22 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
           ? "COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, 'Não informado')"
           : "'Não informado'";
     const companyFilter = companyId === 'nio'
-      ? 'DIRETORIA_NIO IS NOT NULL AND AREA_NIO IS NOT NULL AND NIO_N3 IS NOT NULL'
+      ? "AREA IS NOT NULL AND NIO_N3 IS NOT NULL AND TRIM(NIO_N3) NOT IN ('', '0', 'SEM_REGRA')"
       : companyId === 'tecto'
         ? "TRIM(NIVEL_2) = 'Tecto' AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL"
         : "TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom') AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL";
     const dimensions = companyId === 'nio'
-      ? `TRIM(COALESCE(DIRETORIA_NIO, 'Diretoria Geral')) AS diretoria,
-         TRIM(COALESCE(AREA_NIO, 'Área Geral')) AS area,
+      ? `TRIM(COALESCE(NIVEL_0, 'BAU')) AS n0,
+         TRIM(COALESCE(NIVEL_1, '-')) AS n1Type,
+         'Diretoria Geral' AS diretoria,
+         TRIM(COALESCE(AREA, 'Área Geral')) AS area,
          TRIM(${nioResponsibleColumn}) AS responsavel,
          TRIM(COALESCE(NIO_N1, 'Custos & Despesas')) AS n1,
          TRIM(COALESCE(NIO_N2, 'Operacional')) AS n2,
          TRIM(COALESCE(NIO_N3, 'Item DRE')) AS n3`
-      : `'-' AS diretoria,
+      : `TRIM(COALESCE(NIVEL_0, 'BAU')) AS n0,
+         TRIM(COALESCE(NIVEL_1, '-')) AS n1Type,
+         '-' AS diretoria,
          TRIM(COALESCE(AREA, '-')) AS area,
          TRIM(COALESCE(NIVEL_4, '-')) AS responsavel,
          TRIM(COALESCE(NIVEL_3, '-')) AS n1,
@@ -1518,7 +1541,7 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
       WHERE ${companyFilter}
         AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
         AND SAFE_CAST(REGEXP_EXTRACT(CAST(anomes AS STRING), r'^(\\d{4})') AS INT64) = @year
-      GROUP BY 1,2,3,4,5,6,7,8`;
+      GROUP BY 1,2,3,4,5,6,7,8,9,10`;
     const physicalOrigins = companyId === 'nio' ? ['FTTH'] : companyId === 'tecto'
       ? ['Data Centers'] : ['Business Support', 'Mobile Solutions', 'VOIP', 'Wholesale'];
     const physicalQuery = `
@@ -1550,14 +1573,14 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
     ]);
 
     type Acc = Omit<FinancialReportRow, 'id' | 'classification' | 'level3' | 'level4'> & {
-      diretoria: string; area: string; responsavel: string; n1: string; n2: string; n3: string;
+      n0: string; n1Type: string; diretoria: string; area: string; responsavel: string; n1: string; n2: string; n3: string;
     };
     const financialMap = new Map<string, Acc>();
     for (const row of rawFinancial) {
-      const dims = ['diretoria', 'area', 'responsavel', 'n1', 'n2', 'n3'].map((key) => String(row[key] ?? '-'));
+      const dims = ['n0', 'n1Type', 'diretoria', 'area', 'responsavel', 'n1', 'n2', 'n3'].map((key) => String(row[key] ?? '-'));
       const key = dims.join('|');
       const acc = financialMap.get(key) || {
-        diretoria: dims[0], area: dims[1], responsavel: dims[2], n1: dims[3], n2: dims[4], n3: dims[5],
+        n0: dims[0], n1Type: dims[1], diretoria: dims[2], area: dims[3], responsavel: dims[4], n1: dims[5], n2: dims[6], n3: dims[7],
         realCurrent: 0, budgetCurrent: 0, realYtd: 0, budgetYtd: 0,
       };
       const periodMatch = normalizeReportPeriod(row.anomes);
@@ -1576,13 +1599,45 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
       financialMap.set(key, acc);
     }
     const financialRows: FinancialReportRow[] = Array.from(financialMap.values())
-      .filter((row) => Math.abs(row.realCurrent) >= 0.01 || Math.abs(row.budgetCurrent) >= 0.01)
-      .map((row) => ({
-        id: stableReportRowId([row.diretoria, row.area, row.responsavel, row.n1, row.n2, row.n3]),
-        classification: row.n3, area: row.area, level3: row.n1, level4: row.responsavel,
-        realCurrent: row.realCurrent, budgetCurrent: row.budgetCurrent,
-        realYtd: row.realYtd, budgetYtd: row.budgetYtd,
-      }));
+      .filter(
+        (row) =>
+          Math.abs(row.realCurrent) >= 0.01 ||
+          Math.abs(row.budgetCurrent) >= 0.01 ||
+          Math.abs(row.realYtd) >= 0.01 ||
+          Math.abs(row.budgetYtd) >= 0.01
+      )
+      .map((row) => {
+        const id = stableReportRowId([row.diretoria, row.area, row.responsavel, row.n1, row.n2, row.n3]);
+        if (!justifications[id]) {
+          const dir = normalizeLookupText(row.diretoria || '');
+          const area = normalizeLookupText(row.area || '');
+          const n2 = normalizeLookupText(row.n2 || '');
+          const n3 = normalizeLookupText(row.n3 || '');
+          const fallback =
+            justifications[`${dir}|${area}|${n2}|${n3}`] ||
+            justifications[`${dir}|${area}|${n3}`] ||
+            justifications[`${area}|${n2}|${n3}`] ||
+            justifications[`${area}|${n3}`] ||
+            justifications[n3];
+          if (fallback) {
+            justifications[id] = fallback;
+          }
+        }
+        return {
+          id,
+          classification: row.n3,
+          area: row.area,
+          level0: row.n0,
+          level1: row.n1Type,
+          level2: row.n2,
+          level3: row.n1,
+          level4: row.responsavel,
+          realCurrent: row.realCurrent,
+          budgetCurrent: row.budgetCurrent,
+          realYtd: row.realYtd,
+          budgetYtd: row.budgetYtd,
+        };
+      });
 
     const physicalMap = new Map<string, PhysicalReportRow>();
     for (const row of rawPhysical) {
