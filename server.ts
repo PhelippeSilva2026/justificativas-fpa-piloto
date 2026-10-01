@@ -1658,7 +1658,10 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
     let query = '';
     let fallbackQuery = '';
     const compactPeriod = `${periodMatch[1]}${String(Number(periodMatch[2])).padStart(2, '0')}`;
-    const periodFilter = `REGEXP_REPLACE(CAST(anomes AS STRING), r'[^0-9]', '') = @compactPeriod`;
+    const periodFilter = `CONCAT(
+      REGEXP_EXTRACT(CAST(anomes AS STRING), r'^(\\d{4})'),
+      LPAD(REGEXP_EXTRACT(CAST(anomes AS STRING), r'[\\/-](\\d{1,2})'), 2, '0')
+    ) = @compactPeriod`;
     const params: Record<string, unknown> = { compactPeriod };
     let sheetName = 'Razao';
     let fileLabel = 'Razao';
