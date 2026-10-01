@@ -80,7 +80,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const availablePeriods = [
     '2026/1', '2026/2', '2026/3', '2026/4',
     '2026/5', '2026/6', '2026/7', '2026/8',
-    '2026/9', '2026/10', '2026/11', '2026/12'
+    '2026/9'
   ];
 
   const company = COMPANIES[currentCompany] || COMPANIES.nio;
@@ -171,7 +171,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             {availablePeriods.map((p) => (
               <option key={p} value={p} className="bg-[#14412A] text-white">
-                {p}
+                {p}{p === '2026/9' ? ' — edição liberada' : ' — somente consulta'}
               </option>
             ))}
           </select>

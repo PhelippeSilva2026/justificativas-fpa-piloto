@@ -1028,6 +1028,12 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
     if (!row || !row.id || !justifications || !period) {
       return res.status(400).json({ success: false, message: 'Linha, mês e justificativas são obrigatórios.' });
     }
+    if (String(period).trim() !== '2026/9') {
+      return res.status(403).json({
+        success: false,
+        message: `O período ${String(period).trim()} está bloqueado para edição. Apenas 2026/9 está liberado.`,
+      });
+    }
 
     const cleanCompany = safeObjectSegment(companyId, 'nio');
     const bucketName = sharedJustificationsBucket();

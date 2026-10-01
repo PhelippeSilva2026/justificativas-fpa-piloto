@@ -11,6 +11,7 @@ interface SelectionCardProps {
   justifications: RowJustifications;
   onAutoReconcileAll?: () => void;
   currentCompany: CompanyId;
+  readOnly?: boolean;
 }
 
 export const SelectionCard: React.FC<SelectionCardProps> = ({
@@ -21,6 +22,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
   justifications,
   onAutoReconcileAll,
   currentCompany,
+  readOnly = false,
 }) => {
   const isCorporate = currentCompany === 'vtal' || currentCompany === 'tecto';
   // Cálculo de pendências para o status de fechamento
@@ -185,7 +187,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
               <AlertCircle className="w-3 h-3 text-amber-600" />
               Pendente ({pendingSummary || 'diferenças'})
             </span>
-            {onAutoReconcileAll && (
+            {onAutoReconcileAll && !readOnly && (
               <button
                 type="button"
                 onClick={onAutoReconcileAll}

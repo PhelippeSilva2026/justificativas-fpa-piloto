@@ -9,6 +9,7 @@ interface ImpactsSectionProps {
   monthPrevious: string;
   monthCurrent: string;
   isLoadingJustifications?: boolean;
+  readOnly?: boolean;
   onAddImpact: (type: 'mom' | 'vsOrcado' | 'ytd') => void;
   onUpdateImpact: (
     type: 'mom' | 'vsOrcado' | 'ytd',
@@ -331,6 +332,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
   monthPrevious,
   monthCurrent,
   isLoadingJustifications = false,
+  readOnly = false,
   onAddImpact,
   onUpdateImpact,
   onRemoveImpact,
@@ -344,7 +346,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
   const ytdDelta = selectedRow ? selectedRow.realYTD - selectedRow.orcadoYTD : 0;
   const ytdPct = selectedRow ? selectedRow.diffOrcadoYTDPct : 0;
 
-  const disabled = !selectedRow;
+  const disabled = !selectedRow || readOnly;
 
   return (
     <div className="flex flex-col gap-5 w-full">

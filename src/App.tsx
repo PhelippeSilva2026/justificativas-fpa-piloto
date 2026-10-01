@@ -24,6 +24,12 @@ const FAKE_LEGACY_IDS = new Set([
   'TECTO_ENERGIA_MERCADO_LIVRE', 'TECTO_CHILLERS_CLIMATIZACAO', 'TECTO_CROSS_CONNECTS', 'TECTO_MANUTENCAO_UPS_GERADORES',
 ]);
 
+const EDITABLE_JUSTIFICATION_PERIOD = '2026/9';
+const AVAILABLE_PERIODS = new Set([
+  '2026/1', '2026/2', '2026/3', '2026/4', '2026/5',
+  '2026/6', '2026/7', '2026/8', EDITABLE_JUSTIFICATION_PERIOD,
+]);
+
 function cleanFakeJustifications(map: Record<string, RowJustifications> | null | undefined): Record<string, RowJustifications> {
   if (!map || typeof map !== 'object') return {};
   const cleaned: Record<string, RowJustifications> = {};
@@ -58,7 +64,7 @@ export default function App() {
     return COMPANIES[initialCid]?.excelFileName || 'DRE_FINAL_EXECUTIVA (GCP)';
   });
 
-  const [selectedPeriod, setSelectedPeriod] = useState<string>('2026/8');
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(EDITABLE_JUSTIFICATION_PERIOD);
   const [selectedDiretoria, setSelectedDiretoria] = useState<string>('ALL');
   const [selectedArea, setSelectedArea] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'COMPLETED' | 'PENDING'>('ALL');
@@ -271,7 +277,7 @@ export default function App() {
         (['nio', 'vtal', 'tecto'] as CompanyId[]).forEach((cid) => {
           const rows = data.companyRows[cid];
           if (Array.isArray(rows) && rows.length > 0) {
-            loaded[cid] = convertGcpRowsToWorkbook(rows, '2026/8');
+            loaded[cid] = convertGcpRowsToWorkbook(rows, EDITABLE_JUSTIFICATION_PERIOD);
           }
         });
         setGcpWorkbooks(loaded);
@@ -284,7 +290,7 @@ export default function App() {
           if (wb.rows.length > 0) {
             setSelectedRowId(wb.rows[0].id);
           }
-          if (wb.monthCurrent) {
+          if (wb.monthCurrent && AVAILABLE_PERIODS.has(wb.monthCurrent)) {
             setSelectedPeriod(wb.monthCurrent);
           }
         }
@@ -396,6 +402,10 @@ export default function App() {
 
   // Troca de Período DRE (ex: "2026/8", "2026/9")
   const handleSelectPeriod = (newPeriod: string) => {
+    if (!AVAILABLE_PERIODS.has(newPeriod)) {
+      showToast('Esse período não está disponível para consulta ou preenchimento.', 'error');
+      return;
+    }
     setSelectedPeriod(newPeriod);
     if (workbook.rawRecords && workbook.rawRecords.length > 0) {
       try {
@@ -574,7 +584,7 @@ export default function App() {
     setSelectedDiretoria('ALL');
     setSelectedArea('ALL');
     setSelectedStatus('ALL');
-    if (newWb.monthCurrent) {
+    if (newWb.monthCurrent && AVAILABLE_PERIODS.has(newWb.monthCurrent)) {
       setSelectedPeriod(newWb.monthCurrent);
     }
     if (newWb.rows.length > 0) {
@@ -587,6 +597,10 @@ export default function App() {
   };
 
   const handleUpdateJustifications = (updated: RowJustifications) => {
+    if (selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD) {
+      showToast(`O período ${selectedPeriod} está disponível somente para consulta. Apenas ${EDITABLE_JUSTIFICATION_PERIOD} está liberado para edição.`, 'error');
+      return;
+    }
     if (!selectedRow) return;
     const companyId = activeCompany;
     setJustificationsMap((prev) => {
@@ -649,6 +663,7 @@ export default function App() {
 
   // Funções de manipulação de impactos
   const handleAddImpact = (type: 'mom' | 'vsOrcado' | 'ytd') => {
+    if (selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD) return;
     if (!selectedRow) return;
     const key = type === 'mom' ? 'momImpacts' : type === 'vsOrcado' ? 'vsOrcadoImpacts' : 'ytdImpacts';
     const currentList = currentJustifications[key] || [];
@@ -681,6 +696,7 @@ export default function App() {
     field: 'name' | 'value' | 'justification',
     val: string | number
   ) => {
+    if (selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD) return;
     if (!selectedRow) return;
     const key = type === 'mom' ? 'momImpacts' : type === 'vsOrcado' ? 'vsOrcadoImpacts' : 'ytdImpacts';
     const currentList = currentJustifications[key] || [];
@@ -698,6 +714,7 @@ export default function App() {
   };
 
   const handleRemoveImpact = (type: 'mom' | 'vsOrcado' | 'ytd', id: string) => {
+    if (selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD) return;
     if (!selectedRow) return;
     const key = type === 'mom' ? 'momImpacts' : type === 'vsOrcado' ? 'vsOrcadoImpacts' : 'ytdImpacts';
     const currentList = currentJustifications[key] || [];
@@ -709,6 +726,7 @@ export default function App() {
 
   // Auto-conciliar impactos pendentes
   const handleAutoReconcileAll = () => {
+    if (selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD) return;
     if (!selectedRow) return;
 
     // 1. MoM
@@ -916,6 +934,7 @@ export default function App() {
   }
 
   const company = currentCompanyConfig || COMPANIES.nio;
+  const isJustificationReadOnly = selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD;
 
   return (
     <div className={`min-h-screen flex flex-col font-sans ${activeCompany === 'nio' ? 'bg-[#F6F2EE] text-[#192B1C]' : 'bg-[#F3F3F3] text-[#252525]'}`}>
@@ -1082,6 +1101,11 @@ export default function App() {
 
       {/* CONTEÚDO PRINCIPAL */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {isJustificationReadOnly && (
+          <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+            Período {selectedPeriod} disponível somente para consulta. As justificativas históricas estão bloqueadas para edição; o download do razão continua disponível normalmente.
+          </div>
+        )}
         {activeView === 'presentation' ? (
           /* ===================================================
              MODO APRESENTAÇÃO (SLIDE WIDESCREEN 16:9 TOTAL)
@@ -1215,6 +1239,7 @@ export default function App() {
                   justifications={currentJustifications}
                   onAutoReconcileAll={handleAutoReconcileAll}
                   currentCompany={activeCompany}
+                  readOnly={isJustificationReadOnly}
                 />
               </div>
             </div>
@@ -1226,6 +1251,7 @@ export default function App() {
               monthPrevious={workbook.monthPrevious}
               monthCurrent={workbook.monthCurrent}
               isLoadingJustifications={isLoadingJustifications || isAutoLoadingGcp}
+              readOnly={isJustificationReadOnly}
               onAddImpact={handleAddImpact}
               onUpdateImpact={handleUpdateImpact}
               onRemoveImpact={handleRemoveImpact}
