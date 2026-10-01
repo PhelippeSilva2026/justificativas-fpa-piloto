@@ -133,6 +133,7 @@ export default function App() {
   );
   const [cloudSaveStatus, setCloudSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingSaveCallbacksRef = useRef<Record<string, () => Promise<void>>>({});
   const statusHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
@@ -232,6 +233,7 @@ export default function App() {
 
   useEffect(() => () => {
     Object.values(saveTimersRef.current).forEach(clearTimeout);
+    pendingSaveCallbacksRef.current = {};
   }, []);
 
   // Carregamento automático e 100% conectado com o BigQuery + pré-carregamento de justificativas no boot
@@ -628,8 +630,8 @@ export default function App() {
       clearTimeout(statusHideTimerRef.current);
       statusHideTimerRef.current = null;
     }
-    setCloudSaveStatus('saving');
-    saveTimersRef.current[timerKey] = setTimeout(async () => {
+    const persistChanges = async () => {
+      setCloudSaveStatus('saving');
       try {
         const response = await fetch('/api/gcp/justifications/save-row', {
           method: 'POST',
@@ -657,8 +659,25 @@ export default function App() {
         setCloudSaveStatus('error');
       } finally {
         delete saveTimersRef.current[timerKey];
+        delete pendingSaveCallbacksRef.current[timerKey];
       }
-    }, 900);
+    };
+    pendingSaveCallbacksRef.current[timerKey] = persistChanges;
+    saveTimersRef.current[timerKey] = setTimeout(() => {
+      void persistChanges();
+    }, 5000);
+  };
+
+  const flushPendingJustificationSave = () => {
+    if (!activeCompany || !selectedRow) return;
+    const timerKey = `${activeCompany}:${selectedRow.id}`;
+    const pendingSave = pendingSaveCallbacksRef.current[timerKey];
+    if (!pendingSave) return;
+    if (saveTimersRef.current[timerKey]) {
+      clearTimeout(saveTimersRef.current[timerKey]);
+      delete saveTimersRef.current[timerKey];
+    }
+    void pendingSave();
   };
 
   // Funções de manipulação de impactos
@@ -1101,11 +1120,6 @@ export default function App() {
 
       {/* CONTEÚDO PRINCIPAL */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {isJustificationReadOnly && (
-          <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
-            Período {selectedPeriod} disponível somente para consulta. As justificativas históricas estão bloqueadas para edição; o download do razão continua disponível normalmente.
-          </div>
-        )}
         {activeView === 'presentation' ? (
           /* ===================================================
              MODO APRESENTAÇÃO (SLIDE WIDESCREEN 16:9 TOTAL)
@@ -1255,6 +1269,7 @@ export default function App() {
               onAddImpact={handleAddImpact}
               onUpdateImpact={handleUpdateImpact}
               onRemoveImpact={handleRemoveImpact}
+              onFieldBlur={flushPendingJustificationSave}
             />
 
             {/* LINHA 3: 2 GRÁFICOS WATERFALL VERTICALMENTE EMPILHADOS (Waterfall Mês + Waterfall YTD) */}

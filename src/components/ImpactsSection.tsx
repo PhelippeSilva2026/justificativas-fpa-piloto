@@ -18,6 +18,7 @@ interface ImpactsSectionProps {
     val: string | number
   ) => void;
   onRemoveImpact: (type: 'mom' | 'vsOrcado' | 'ytd', id: string) => void;
+  onFieldBlur?: () => void;
 }
 
 /**
@@ -27,8 +28,9 @@ const CurrencyInput: React.FC<{
   value: number;
   disabled?: boolean;
   onChange: (val: number) => void;
+  onCommit?: () => void;
   className?: string;
-}> = ({ value, disabled, onChange, className }) => {
+}> = ({ value, disabled, onChange, onCommit, className }) => {
   const [text, setText] = React.useState(() => formatCurrencyBRL(value));
   const [isFocused, setIsFocused] = React.useState(false);
 
@@ -50,6 +52,7 @@ const CurrencyInput: React.FC<{
     const parsed = parseCurrencyBRL(text);
     onChange(parsed);
     setText(formatCurrencyBRL(parsed));
+    onCommit?.();
   };
 
   const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
@@ -102,6 +105,7 @@ interface ImpactRowProps {
     val: string | number
   ) => void;
   onRemoveImpact: (type: 'mom' | 'vsOrcado' | 'ytd', id: string) => void;
+  onFieldBlur?: () => void;
 }
 
 const ImpactRowCard: React.FC<ImpactRowProps> = ({
@@ -122,6 +126,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
   onAddImpact,
   onUpdateImpact,
   onRemoveImpact,
+  onFieldBlur,
 }) => {
   const sum = impacts.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
   const pending = deltaValue - sum;
@@ -286,6 +291,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
                       value={imp.name}
                       disabled={disabled}
                       onChange={(e) => onUpdateImpact(type, imp.id, 'name', e.target.value)}
+                      onBlur={onFieldBlur}
                       className="flex-1 min-w-0 bg-white border border-[#CCD8C7] rounded-xl px-2.5 py-1 text-xs text-[#14412A] font-semibold focus:outline-hidden focus:border-[#14412A]"
                     />
 
@@ -293,6 +299,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
                       value={imp.value}
                       disabled={disabled}
                       onChange={(val) => onUpdateImpact(type, imp.id, 'value', val)}
+                      onCommit={onFieldBlur}
                       className="w-36 bg-white border border-[#CCD8C7] rounded-xl px-2.5 py-1 text-xs font-bold text-right text-[#14412A] font-mono focus:outline-hidden focus:border-[#14412A]"
                     />
 
@@ -314,6 +321,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
                     value={imp.justification}
                     disabled={disabled}
                     onChange={(e) => onUpdateImpact(type, imp.id, 'justification', e.target.value)}
+                    onBlur={onFieldBlur}
                     className="w-full bg-white border border-[#CCD8C7] rounded-xl px-2.5 py-1.5 text-[11px] text-[#333] leading-relaxed resize-y focus:outline-hidden focus:border-[#14412A] min-h-[46px]"
                   />
                 </div>
@@ -336,6 +344,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
   onAddImpact,
   onUpdateImpact,
   onRemoveImpact,
+  onFieldBlur,
 }) => {
   const momDelta = selectedRow ? selectedRow.realCurrent - selectedRow.realMMinus1 : 0;
   const momPct = selectedRow ? selectedRow.diffMMinus1Pct : 0;
@@ -371,6 +380,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
         onAddImpact={onAddImpact}
         onUpdateImpact={onUpdateImpact}
         onRemoveImpact={onRemoveImpact}
+        onFieldBlur={onFieldBlur}
       />
 
       {/* ============================================================
@@ -394,6 +404,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
         onAddImpact={onAddImpact}
         onUpdateImpact={onUpdateImpact}
         onRemoveImpact={onRemoveImpact}
+        onFieldBlur={onFieldBlur}
       />
 
       {/* ============================================================
@@ -417,6 +428,7 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
         onAddImpact={onAddImpact}
         onUpdateImpact={onUpdateImpact}
         onRemoveImpact={onRemoveImpact}
+        onFieldBlur={onFieldBlur}
       />
     </div>
   );

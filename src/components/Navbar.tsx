@@ -1,6 +1,6 @@
 import React from 'react';
 import { CompanyLogo } from './CompanyLogo';
-import { FileSpreadsheet, Presentation, Layers, ArrowLeft, Loader2 } from 'lucide-react';
+import { FileSpreadsheet, Presentation, Layers, ArrowLeft, Loader2, Eye, Pencil, ChevronDown } from 'lucide-react';
 import { DREWorkbook, CompanyId } from '../types';
 import { COMPANIES } from '../utils/companyConfigs';
 
@@ -77,6 +77,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onExportRazaoExcel,
   isExportingExcel,
 }) => {
+  const [periodMenuOpen, setPeriodMenuOpen] = React.useState(false);
   const availablePeriods = [
     '2026/1', '2026/2', '2026/3', '2026/4',
     '2026/5', '2026/6', '2026/7', '2026/8',
@@ -162,19 +163,42 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* SELETOR INTERATIVO DE PERÍODO DRE */}
-        <div className="hidden xl:flex items-center gap-2 bg-black/25 px-3 py-1.5 rounded-2xl border border-white/15 text-xs shadow-inner">
+        <div className="hidden xl:flex items-center gap-2 bg-black/25 px-2.5 py-1.5 rounded-2xl border border-white/15 text-xs shadow-inner">
           <span className="text-white/70 font-medium">Período:</span>
-          <select
-            value={selectedPeriod}
-            onChange={(e) => onSelectPeriod(e.target.value)}
-            className={`bg-black/40 font-bold text-xs px-2.5 py-1 rounded-lg border border-white/30 focus:outline-hidden cursor-pointer ${accentColorText}`}
-          >
-            {availablePeriods.map((p) => (
-              <option key={p} value={p} className="bg-[#14412A] text-white">
-                {p}{p === '2026/9' ? ' — edição liberada' : ' — somente consulta'}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setPeriodMenuOpen((open) => !open)}
+              className={`min-w-[92px] bg-black/40 font-bold text-xs px-2.5 py-1 rounded-lg border border-white/30 cursor-pointer inline-flex items-center justify-between gap-2 ${accentColorText}`}
+              title={selectedPeriod === '2026/9' ? 'Período liberado para edição' : 'Período disponível somente para consulta'}
+            >
+              <span>{selectedPeriod}</span>
+              {selectedPeriod === '2026/9' ? <Pencil className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              <ChevronDown className="w-3 h-3 text-white/60" />
+            </button>
+            {periodMenuOpen && (
+              <div className="absolute top-full left-0 mt-1 z-50 min-w-[112px] rounded-xl border border-white/20 bg-[#173F2B] p-1 shadow-xl">
+                {availablePeriods.map((p) => {
+                  const editable = p === '2026/9';
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => {
+                        onSelectPeriod(p);
+                        setPeriodMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white hover:bg-white/15 ${selectedPeriod === p ? 'bg-white/10' : ''}`}
+                      title={editable ? 'Edição liberada' : 'Somente consulta'}
+                    >
+                      <span>{p}</span>
+                      {editable ? <Pencil className="w-3 h-3 text-[#39FF00]" /> : <Eye className="w-3 h-3 text-white/70" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <div className="text-[11px] text-white/60 pl-1 border-l border-white/20">
             <span className="text-white/90 font-semibold">M-1: {monthPrevious}</span>
           </div>
