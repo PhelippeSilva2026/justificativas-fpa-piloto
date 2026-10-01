@@ -1620,9 +1620,14 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
     const companyId = String(req.body?.companyId || 'nio').toLowerCase() as ReportCompanyId;
     const diretoria = String(req.body?.diretoria || 'ALL').trim();
     const area = String(req.body?.area || 'ALL').trim();
+    const period = String(req.body?.period || '').trim();
+    const periodMatch = period.match(/^(\d{4})[\/-](\d{1,2})$/);
 
     if (!['nio', 'vtal', 'tecto'].includes(companyId)) {
       return res.status(400).json({ success: false, message: 'Empresa inválida.' });
+    }
+    if (!periodMatch || Number(periodMatch[2]) < 1 || Number(periodMatch[2]) > 12) {
+      return res.status(400).json({ success: false, message: 'Período inválido para a extração.' });
     }
 
     const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
@@ -1652,7 +1657,9 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
 
     let query = '';
     let fallbackQuery = '';
-    const params: Record<string, unknown> = {};
+    const compactPeriod = `${periodMatch[1]}${String(Number(periodMatch[2])).padStart(2, '0')}`;
+    const periodFilter = `REGEXP_REPLACE(CAST(anomes AS STRING), r'[^0-9]', '') = @compactPeriod`;
+    const params: Record<string, unknown> = { compactPeriod };
     let sheetName = 'Razao';
     let fileLabel = 'Razao';
 
@@ -1664,6 +1671,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
           FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA\`
           WHERE TRIM(NIVEL_2) = 'Nio'
             AND ${baseScopeFilter}
+            AND ${periodFilter}
         `;
         sheetName = 'Razao Executiva Nio';
         fileLabel = 'Razao_Executiva_Nio';
@@ -1675,6 +1683,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
           FROM \`vtal-fpea-prd.relatorios.VW_DRE_RELATORIO\`
           WHERE TRIM(NIVEL_2) = 'Nio'
             AND TRIM(DIRETORIA_NIO) = @diretoria
+            AND ${periodFilter}
         `;
         fallbackQuery = `
           SELECT ${detailedSelectCols}
@@ -1683,6 +1692,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
             AND ${baseScopeFilter}
             AND TRIM(NIVEL_2) = 'Nio'
             AND TRIM(DIRETORIA_NIO) = @diretoria
+            AND ${periodFilter}
         `;
         sheetName = `Razao ${diretoria}`.slice(0, 31);
         fileLabel = `Razao_Nio_${diretoria.replace(/[^a-zA-Z0-9_-]+/g, '_')}`;
@@ -1696,6 +1706,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
           WHERE NIVEL_2 IS NOT NULL
             AND TRIM(NIVEL_2) NOT IN ('Nio', 'Tecto')
             AND ${baseScopeFilter}
+            AND ${periodFilter}
         `;
         sheetName = 'Razao Executiva Vtal';
         fileLabel = 'Razao_Executiva_Vtal';
@@ -1708,6 +1719,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
           WHERE NIVEL_2 IS NOT NULL
             AND TRIM(NIVEL_2) NOT IN ('Nio', 'Tecto')
             AND TRIM(AREA) = @area
+            AND ${periodFilter}
         `;
         fallbackQuery = `
           SELECT ${detailedSelectCols}
@@ -1717,6 +1729,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
             AND NIVEL_2 IS NOT NULL
             AND TRIM(NIVEL_2) NOT IN ('Nio', 'Tecto')
             AND TRIM(AREA) = @area
+            AND ${periodFilter}
         `;
         sheetName = `Razao ${area}`.slice(0, 31);
         fileLabel = `Razao_Vtal_${area.replace(/[^a-zA-Z0-9_-]+/g, '_')}`;
@@ -1727,6 +1740,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
         SELECT *
         FROM \`vtal-fpea-prd.relatorios.VW_DRE_RELATORIO\`
         WHERE TRIM(NIVEL_2) = 'Tecto'
+          AND ${periodFilter}
       `;
       fallbackQuery = `
         SELECT ${detailedSelectCols}
@@ -1734,6 +1748,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
         WHERE TIPO IN ('ACTUAL 2026', 'Budget 2026')
           AND ${baseScopeFilter}
           AND TRIM(NIVEL_2) = 'Tecto'
+          AND ${periodFilter}
       `;
       sheetName = 'Razao Detalhada Tecto';
       fileLabel = 'Razao_Detalhada_Tecto';
