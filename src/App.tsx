@@ -31,7 +31,10 @@ const AVAILABLE_PERIODS = new Set([
   '2026/6', '2026/7', '2026/8', EDITABLE_JUSTIFICATION_PERIOD,
 ]);
 
-function uniqueSortedValues(rows: DRERow[], key: 'n1' | 'n2' | 'n3' | 'responsavel'): string[] {
+function uniqueSortedValues(
+  rows: DRERow[],
+  key: 'diretoria' | 'area' | 'n1' | 'n2' | 'n3' | 'responsavel'
+): string[] {
   const values = new Set<string>();
   rows.forEach((row) => {
     const value = String(row[key] || '').trim();
@@ -457,32 +460,6 @@ export default function App() {
     [workbook.rows]
   );
 
-  // Extrair listas únicas de Diretorias e Áreas somente das linhas relevantes.
-  const uniqueDiretorias = useMemo(() => {
-    const set = new Set<string>();
-    relevantRows.forEach((r) => {
-      const d = (r.diretoria || '').trim();
-      if (d && d !== '-' && d !== '0' && d !== 'Sem Diretoria' && d !== 'Diretoria Geral') {
-        set.add(d);
-      }
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
-  }, [relevantRows]);
-
-  const uniqueAreas = useMemo(() => {
-    const set = new Set<string>();
-    relevantRows.forEach((r) => {
-      const d = (r.diretoria || '').trim();
-      const a = (r.area || '').trim();
-      if (selectedDiretoria === 'ALL' || d === selectedDiretoria) {
-        if (a && a !== '-' && a !== '0' && a !== 'Sem Área' && a !== 'Área Geral') {
-          set.add(a);
-        }
-      }
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
-  }, [relevantRows, selectedDiretoria]);
-
   const resolveRowJustifications = (row: DRERow | null | undefined): RowJustifications => {
     const empty: RowJustifications = {
       momImpacts: [],
@@ -523,136 +500,110 @@ export default function App() {
       && isWithinReconciliationTolerance(ytdPending);
   };
 
-  // Primeiro aplica o recorte organizacional para calcular os KPIs do conjunto visível.
-  const organizationFilteredRows = useMemo(() => {
-    const list = relevantRows.filter((r) => {
-      if (selectedDiretoria !== 'ALL' && r.diretoria !== selectedDiretoria) {
-        return false;
-      }
-      if (selectedArea !== 'ALL' && r.area !== selectedArea) {
-        return false;
-      }
-      return true;
-    });
+  type FacetKey = 'diretoria' | 'area' | 'n1' | 'n2' | 'n3' | 'responsavel';
+  const matchesActiveFacets = (row: DRERow, omitted?: FacetKey) => {
+    if (omitted !== 'diretoria' && selectedDiretoria !== 'ALL' && row.diretoria !== selectedDiretoria) return false;
+    if (omitted !== 'area' && selectedArea !== 'ALL' && row.area !== selectedArea) return false;
+    if (activeCompany === 'nio') {
+      if (omitted !== 'n1' && selectedNioN1 !== 'ALL' && row.n1 !== selectedNioN1) return false;
+      if (omitted !== 'n2' && selectedNioN2 !== 'ALL' && row.n2 !== selectedNioN2) return false;
+      if (omitted !== 'n3' && selectedNioN3 !== 'ALL' && row.n3 !== selectedNioN3) return false;
+      if (
+        omitted !== 'responsavel'
+        && selectedNioResponsavel !== 'ALL'
+        && row.responsavel !== selectedNioResponsavel
+      ) return false;
+    }
+    return true;
+  };
 
-    return [...list].sort((a, b) => {
-      const isConsolA =
-        (a.n1 === '0' && a.n2 === '0' && a.n3 === '0') ||
-        a.n1 === '0' ||
-        `${a.n1} | ${a.n2} | ${a.n3}`.trim() === '0 | 0 | 0' ||
-        (a.n1 || '').toLowerCase() === 'consolidado' ||
-        (a.n3 || '').toLowerCase() === 'consolidado';
-      const isConsolB =
-        (b.n1 === '0' && b.n2 === '0' && b.n3 === '0') ||
-        b.n1 === '0' ||
-        `${b.n1} | ${b.n2} | ${b.n3}`.trim() === '0 | 0 | 0' ||
-        (b.n1 || '').toLowerCase() === 'consolidado' ||
-        (b.n3 || '').toLowerCase() === 'consolidado';
-
-      if (isConsolA && !isConsolB) return -1;
-      if (!isConsolA && isConsolB) return 1;
-
-      const n1A = (a.n1 || '').trim();
-      const n1B = (b.n1 || '').trim();
-      const cmpN1 = n1A.localeCompare(n1B, 'pt-BR', { numeric: true, sensitivity: 'base' });
-      if (cmpN1 !== 0) return cmpN1;
-
-      const n2A = (a.n2 || '').trim();
-      const n2B = (b.n2 || '').trim();
-      const cmpN2 = n2A.localeCompare(n2B, 'pt-BR', { numeric: true, sensitivity: 'base' });
-      if (cmpN2 !== 0) return cmpN2;
-
-      const n3A = (a.n3 || '').trim();
-      const n3B = (b.n3 || '').trim();
-      return n3A.localeCompare(n3B, 'pt-BR', { numeric: true, sensitivity: 'base' });
-    });
-  }, [relevantRows, selectedDiretoria, selectedArea]);
-
-  const statusCounts = useMemo(() => {
-    const completed = organizationFilteredRows.filter(isRowReconciled).length;
-    return {
-      total: organizationFilteredRows.length,
-      completed,
-      pending: organizationFilteredRows.length - completed,
-    };
-  }, [organizationFilteredRows, justificationsMap, justificationsLookupMap]);
-
-  // Em seguida aplica o status escolhido sem alterar os contadores do recorte.
-  const statusFilteredRows = useMemo(() => {
-    if (selectedStatus === 'ALL') return organizationFilteredRows;
-    return organizationFilteredRows.filter((row) =>
+  const statusEligibleRows = useMemo(() => {
+    if (selectedStatus === 'ALL') return relevantRows;
+    return relevantRows.filter((row) =>
       selectedStatus === 'COMPLETED' ? isRowReconciled(row) : !isRowReconciled(row)
     );
-  }, [organizationFilteredRows, selectedStatus, justificationsMap, justificationsLookupMap]);
+  }, [relevantRows, selectedStatus, justificationsMap, justificationsLookupMap]);
 
-  const nioN1Options = useMemo(() => uniqueSortedValues(statusFilteredRows, 'n1'), [statusFilteredRows]);
-  const nioN2Source = useMemo(
-    () => statusFilteredRows.filter((row) => selectedNioN1 === 'ALL' || row.n1 === selectedNioN1),
-    [statusFilteredRows, selectedNioN1]
+  const facetOptions = (key: FacetKey) => uniqueSortedValues(
+    statusEligibleRows.filter((row) => matchesActiveFacets(row, key)),
+    key
   );
-  const nioN2Options = useMemo(() => uniqueSortedValues(nioN2Source, 'n2'), [nioN2Source]);
-  const nioN3Source = useMemo(
-    () => nioN2Source.filter((row) => selectedNioN2 === 'ALL' || row.n2 === selectedNioN2),
-    [nioN2Source, selectedNioN2]
+
+  const uniqueDiretorias = useMemo(
+    () => facetOptions('diretoria'),
+    [statusEligibleRows, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
   );
-  const nioN3Options = useMemo(() => uniqueSortedValues(nioN3Source, 'n3'), [nioN3Source]);
-  const nioResponsavelSource = useMemo(
-    () => nioN3Source.filter((row) => selectedNioN3 === 'ALL' || row.n3 === selectedNioN3),
-    [nioN3Source, selectedNioN3]
+  const uniqueAreas = useMemo(
+    () => facetOptions('area'),
+    [statusEligibleRows, selectedDiretoria, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
+  );
+  const nioN1Options = useMemo(
+    () => facetOptions('n1'),
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
+  );
+  const nioN2Options = useMemo(
+    () => facetOptions('n2'),
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN3, selectedNioResponsavel, activeCompany]
+  );
+  const nioN3Options = useMemo(
+    () => facetOptions('n3'),
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2, selectedNioResponsavel, activeCompany]
   );
   const nioResponsavelOptions = useMemo(
-    () => uniqueSortedValues(nioResponsavelSource, 'responsavel'),
-    [nioResponsavelSource]
+    () => facetOptions('responsavel'),
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, activeCompany]
   );
 
   useEffect(() => {
-    if (activeCompany !== 'nio') return;
-    if (selectedNioN1 !== 'ALL' && !nioN1Options.includes(selectedNioN1)) {
-      setSelectedNioN1('ALL');
-      setSelectedNioN2('ALL');
-      setSelectedNioN3('ALL');
-      setSelectedNioResponsavel('ALL');
-      return;
-    }
-    if (selectedNioN2 !== 'ALL' && !nioN2Options.includes(selectedNioN2)) {
-      setSelectedNioN2('ALL');
-      setSelectedNioN3('ALL');
-      setSelectedNioResponsavel('ALL');
-      return;
-    }
-    if (selectedNioN3 !== 'ALL' && !nioN3Options.includes(selectedNioN3)) {
-      setSelectedNioN3('ALL');
-      setSelectedNioResponsavel('ALL');
-      return;
-    }
-    if (
-      selectedNioResponsavel !== 'ALL'
-      && !nioResponsavelOptions.includes(selectedNioResponsavel)
-    ) {
-      setSelectedNioResponsavel('ALL');
+    const synchronize = (
+      current: string,
+      options: string[],
+      setter: React.Dispatch<React.SetStateAction<string>>
+    ) => {
+      if (current !== 'ALL' && !options.includes(current)) setter('ALL');
+      else if (current === 'ALL' && options.length === 1) setter(options[0]);
+    };
+    synchronize(selectedDiretoria, uniqueDiretorias, setSelectedDiretoria);
+    synchronize(selectedArea, uniqueAreas, setSelectedArea);
+    if (activeCompany === 'nio') {
+      synchronize(selectedNioN1, nioN1Options, setSelectedNioN1);
+      synchronize(selectedNioN2, nioN2Options, setSelectedNioN2);
+      synchronize(selectedNioN3, nioN3Options, setSelectedNioN3);
+      synchronize(selectedNioResponsavel, nioResponsavelOptions, setSelectedNioResponsavel);
     }
   }, [
-    activeCompany,
-    selectedNioN1,
-    selectedNioN2,
-    selectedNioN3,
-    selectedNioResponsavel,
-    nioN1Options,
-    nioN2Options,
-    nioN3Options,
-    nioResponsavelOptions,
+    activeCompany, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2,
+    selectedNioN3, selectedNioResponsavel, uniqueDiretorias, uniqueAreas,
+    nioN1Options, nioN2Options, nioN3Options, nioResponsavelOptions,
   ]);
 
+  const dimensionFilteredRows = useMemo(
+    () => relevantRows.filter((row) => matchesActiveFacets(row)),
+    [
+      relevantRows, activeCompany, selectedDiretoria, selectedArea, selectedNioN1,
+      selectedNioN2, selectedNioN3, selectedNioResponsavel,
+    ]
+  );
+
+  const statusCounts = useMemo(() => {
+    const completed = dimensionFilteredRows.filter(isRowReconciled).length;
+    return {
+      total: dimensionFilteredRows.length,
+      completed,
+      pending: dimensionFilteredRows.length - completed,
+    };
+  }, [dimensionFilteredRows, justificationsMap, justificationsLookupMap]);
+
   const filteredRows = useMemo(() => {
-    const rows = activeCompany === 'nio'
-      ? nioResponsavelSource.filter(
-          (row) => selectedNioResponsavel === 'ALL' || row.responsavel === selectedNioResponsavel
-        )
-      : statusFilteredRows;
+    const rows = selectedStatus === 'ALL'
+      ? dimensionFilteredRows
+      : dimensionFilteredRows.filter((row) =>
+          selectedStatus === 'COMPLETED' ? isRowReconciled(row) : !isRowReconciled(row)
+        );
     return [...rows].sort((a, b) =>
       (a.n3 || '').localeCompare(b.n3 || '', 'pt-BR', { sensitivity: 'base', numeric: true })
     );
-  }, [activeCompany, statusFilteredRows, nioResponsavelSource, selectedNioResponsavel]);
+  }, [dimensionFilteredRows, selectedStatus, justificationsMap, justificationsLookupMap]);
 
   // Garantir que a linha selecionada pertença ao subconjunto filtrado
   useEffect(() => {

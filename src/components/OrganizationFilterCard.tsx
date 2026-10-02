@@ -41,10 +41,6 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
           </div>
         </div>
 
-        <p className="text-xs text-[#5A6454] mb-4">
-          Selecione a <strong>Diretoria</strong> e a <strong>Área</strong> para filtrar os desvios e alimentar as análises da DRE.
-        </p>
-
         <div className="space-y-3.5">
           {/* Campo Diretoria (DIRETORIA_NIO) */}
           <div>
