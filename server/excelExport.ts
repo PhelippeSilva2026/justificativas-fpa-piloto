@@ -132,21 +132,6 @@ export async function buildFastXlsxBuffer(
   const cols = rows.length > 0 ? Object.keys(rows[0]) : ['Mensagem'];
   const colLetters = cols.map((_, idx) => getColumnLetter(idx));
 
-  const sharedMap = new Map<string, number>();
-  const sharedList: string[] = [];
-  let totalStringRefs = 0;
-
-  const getSharedStringIdx = (str: string): number => {
-    totalStringRefs += 1;
-    let idx = sharedMap.get(str);
-    if (idx === undefined) {
-      idx = sharedList.length;
-      sharedMap.set(str, idx);
-      sharedList.push(str);
-    }
-    return idx;
-  };
-
   // 1. Stream-compress xl/worksheets/sheet1.xml
   const sheetDeflate = zlib.createDeflateRaw({ level: 1 });
   const sheetChunks: Buffer[] = [];
@@ -179,8 +164,7 @@ export async function buildFastXlsxBuffer(
   // Linha 1: Cabeçalho (estilo s="1" em negrito com fundo corporativo)
   let headerRowXml = `<row r="1" ht="20" customHeight="1">`;
   for (let c = 0; c < cols.length; c++) {
-    const sIdx = getSharedStringIdx(cols[c]);
-    headerRowXml += `<c r="${colLetters[c]}1" s="1" t="s"><v>${sIdx}</v></c>`;
+    headerRowXml += `<c r="${colLetters[c]}1" s="1" t="inlineStr"><is><t xml:space="preserve">${escapeXmlText(cols[c])}</t></is></c>`;
   }
   headerRowXml += `</row>`;
   writeSheetXml(headerRowXml);
@@ -198,8 +182,7 @@ export async function buildFastXlsxBuffer(
       if (typeof val === 'number') {
         batchXml += `<c r="${colLetters[c]}${rowNum}"><v>${val}</v></c>`;
       } else {
-        const sIdx = getSharedStringIdx(val);
-        batchXml += `<c r="${colLetters[c]}${rowNum}" t="s"><v>${sIdx}</v></c>`;
+        batchXml += `<c r="${colLetters[c]}${rowNum}" t="inlineStr"><is><t xml:space="preserve">${escapeXmlText(val)}</t></is></c>`;
       }
     }
     batchXml += `</row>`;
@@ -222,46 +205,7 @@ export async function buildFastXlsxBuffer(
   await sheetDone;
   const sheetCompressed = Buffer.concat(sheetChunks);
 
-  // 2. Stream-compress xl/sharedStrings.xml
-  const ssDeflate = zlib.createDeflateRaw({ level: 1 });
-  const ssChunks: Buffer[] = [];
-  ssDeflate.on('data', (c: Buffer) => ssChunks.push(c));
-  const ssDone = new Promise<void>((resolve, reject) => {
-    ssDeflate.on('end', () => resolve());
-    ssDeflate.on('error', reject);
-  });
-
-  let ssCrc = 0;
-  let ssUncompressed = 0;
-  const writeSsXml = (xmlChunk: string) => {
-    const buf = Buffer.from(xmlChunk, 'utf8');
-    ssCrc = crc32Update(buf, ssCrc);
-    ssUncompressed += buf.length;
-    ssDeflate.write(buf);
-  };
-
-  writeSsXml(
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-      `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${totalStringRefs}" uniqueCount="${sharedList.length}">`
-  );
-
-  let ssBatch = '';
-  for (let i = 0; i < sharedList.length; i++) {
-    ssBatch += `<si><t xml:space="preserve">${escapeXmlText(sharedList[i])}</t></si>`;
-    if ((i + 1) % 4000 === 0) {
-      writeSsXml(ssBatch);
-      ssBatch = '';
-    }
-  }
-  if (ssBatch) {
-    writeSsXml(ssBatch);
-  }
-  writeSsXml(`</sst>`);
-  ssDeflate.end();
-  await ssDone;
-  const ssCompressed = Buffer.concat(ssChunks);
-
-  // 3. Demais arquivos estáticos do pacote OpenXML (.xlsx)
+  // 2. Demais arquivos estáticos do pacote OpenXML (.xlsx)
   const contentTypesXml = Buffer.from(
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
@@ -270,7 +214,6 @@ export async function buildFastXlsxBuffer(
       `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
       `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
       `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
-      `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>` +
       `</Types>`,
     'utf8'
   );
@@ -296,7 +239,6 @@ export async function buildFastXlsxBuffer(
       `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
       `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
       `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
-      `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>` +
       `</Relationships>`,
     'utf8'
   );
@@ -329,12 +271,6 @@ export async function buildFastXlsxBuffer(
     { name: 'xl/workbook.xml', ...deflateBufferRaw(workbookXml) },
     { name: 'xl/_rels/workbook.xml.rels', ...deflateBufferRaw(workbookRelsXml) },
     { name: 'xl/styles.xml', ...deflateBufferRaw(stylesXml) },
-    {
-      name: 'xl/sharedStrings.xml',
-      compressedData: ssCompressed,
-      uncompressedSize: ssUncompressed,
-      crc: ssCrc,
-    },
     {
       name: 'xl/worksheets/sheet1.xml',
       compressedData: sheetCompressed,
@@ -395,7 +331,8 @@ export async function queryBigQueryFast(
   }
 
   const resultsByChunk: Record<string, unknown>[][] = new Array(starts.length);
-  const CONCURRENCY = 16;
+  // Evita picos de memória no plano de 512 MB ao baixar razões detalhados grandes.
+  const CONCURRENCY = 4;
 
   let cursor = 0;
   const workers = Array.from({ length: Math.min(CONCURRENCY, starts.length) }, async () => {

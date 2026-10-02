@@ -77,17 +77,20 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
   let orcadoBridgeAccum = row.realCurrent;
   const vsOrcadoImpacts = justifications?.vsOrcadoImpacts || [];
   vsOrcadoImpacts.forEach((imp) => {
+    // Os impactos são armazenados como Real - Orçado. Como o gráfico caminha
+    // do Real para o Orçado, o movimento visual precisa usar o sinal inverso.
+    const bridgeChange = -imp.value;
     const start = orcadoBridgeAccum;
-    const end = orcadoBridgeAccum + imp.value;
+    const end = orcadoBridgeAccum + bridgeChange;
     orcadoBridgeAccum = end;
     bars.push({
       label: imp.name || 'Desvio Orç.',
-      category: imp.value < 0 ? 'negative' : 'positive',
+      category: bridgeChange < 0 ? 'negative' : 'positive',
       startValue: start,
       endValue: end,
-      changeValue: imp.value,
+      changeValue: bridgeChange,
       displayValue: imp.value,
-      color: imp.value < 0 ? '#8B0000' : '#22C55E',
+      color: bridgeChange < 0 ? '#8B0000' : '#22C55E',
     });
   });
 
@@ -187,17 +190,20 @@ export function buildYTDWaterfallData(row: DRERow, justifications?: RowJustifica
   // 2. Barras intermediárias YTD informadas pelo usuário
   const ytdImpacts = justifications?.ytdImpacts || [];
   ytdImpacts.forEach((imp) => {
+    // Mesma convenção: os impactos conciliam Real - Orçado; para caminhar
+    // visualmente do Real até o Orçado, aplicamos o sinal inverso na ponte.
+    const bridgeChange = -imp.value;
     const start = currentAccum;
-    const end = currentAccum + imp.value;
+    const end = currentAccum + bridgeChange;
     currentAccum = end;
     bars.push({
       label: imp.name || 'Desvio YTD',
-      category: imp.value < 0 ? 'negative' : 'positive',
+      category: bridgeChange < 0 ? 'negative' : 'positive',
       startValue: start,
       endValue: end,
-      changeValue: imp.value,
+      changeValue: bridgeChange,
       displayValue: imp.value,
-      color: imp.value < 0 ? '#8B0000' : '#22C55E',
+      color: bridgeChange < 0 ? '#8B0000' : '#22C55E',
     });
   });
 
