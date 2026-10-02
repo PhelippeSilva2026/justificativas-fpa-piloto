@@ -37,9 +37,6 @@ export const OrganizationFilterCard: React.FC<OrganizationFilterCardProps> = ({
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#14412A] text-white text-xs font-bold">
-              1
-            </span>
             <h2 className="font-bold text-[#14412A] text-base">Filtro Organizacional</h2>
           </div>
         </div>

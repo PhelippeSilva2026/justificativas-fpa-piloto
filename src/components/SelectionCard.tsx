@@ -3,6 +3,29 @@ import { CompanyId, DRERow, RowJustifications } from '../types';
 import { formatCurrencyShort, isWithinReconciliationTolerance } from '../utils/formatters';
 import { ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
 
+const LevelSelect: React.FC<{
+  label: string;
+  value: string;
+  options: string[];
+  allLabel: string;
+  onChange: (value: string) => void;
+}> = ({ label, value, options, allLabel, onChange }) => (
+  <label className="block">
+    <span className="block mb-1 text-[10px] font-bold uppercase tracking-wide text-[#768070]">{label}</span>
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full appearance-none bg-white border border-[#A7AC98]/80 text-[#192B1C] text-xs font-semibold rounded-xl px-3.5 py-2.5 pr-9 focus:outline-none focus:ring-2 focus:ring-[#14412A] cursor-pointer"
+      >
+        <option value="ALL">{allLabel}</option>
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6E7769] pointer-events-none" />
+    </div>
+  </label>
+);
+
 interface SelectionCardProps {
   rows: DRERow[];
   selectedRowId: string | null;
@@ -12,6 +35,20 @@ interface SelectionCardProps {
   onAutoReconcileAll?: () => void;
   currentCompany: CompanyId;
   readOnly?: boolean;
+  nioFilters?: {
+    n1Options: string[];
+    n2Options: string[];
+    n3Options: string[];
+    responsavelOptions: string[];
+    selectedN1: string;
+    selectedN2: string;
+    selectedN3: string;
+    selectedResponsavel: string;
+    onSelectN1: (value: string) => void;
+    onSelectN2: (value: string) => void;
+    onSelectN3: (value: string) => void;
+    onSelectResponsavel: (value: string) => void;
+  };
 }
 
 export const SelectionCard: React.FC<SelectionCardProps> = ({
@@ -23,6 +60,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
   onAutoReconcileAll,
   currentCompany,
   readOnly = false,
+  nioFilters,
 }) => {
   const isCorporate = currentCompany === 'vtal' || currentCompany === 'tecto';
   // Cálculo de pendências para o status de fechamento
@@ -64,11 +102,8 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
       {/* Topo do Card com Título e Contador */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#14412A] text-white text-xs font-bold shrink-0">
-            2
-          </span>
           <h2 className="text-base font-bold text-[#14412A]">
-            Selecionar Linha de Despesa ({isCorporate ? 'Classificação FP&A' : 'N3'})
+            {isCorporate ? 'Selecionar Linha de Despesa (Classificação FP&A)' : 'Filtro Nível'}
           </h2>
         </div>
         <span className="text-xs text-[#8C9283] font-medium">
@@ -76,7 +111,14 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
         </span>
       </div>
 
-      {/* Select Dropdown estilizado como no layout */}
+      {currentCompany === 'nio' && nioFilters ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 my-3">
+          <LevelSelect label="NIO_N1" value={nioFilters.selectedN1} options={nioFilters.n1Options} allLabel="Todos os Níveis 1" onChange={nioFilters.onSelectN1} />
+          <LevelSelect label="NIO_N2" value={nioFilters.selectedN2} options={nioFilters.n2Options} allLabel="Todos os Níveis 2" onChange={nioFilters.onSelectN2} />
+          <LevelSelect label="NIO_N3" value={nioFilters.selectedN3} options={nioFilters.n3Options} allLabel="Todos os Níveis 3" onChange={nioFilters.onSelectN3} />
+          <LevelSelect label="Responsável" value={nioFilters.selectedResponsavel} options={nioFilters.responsavelOptions} allLabel="Todos os Responsáveis" onChange={nioFilters.onSelectResponsavel} />
+        </div>
+      ) : (
       <div className="relative my-3">
         <select
           value={selectedRowId || ''}
@@ -106,9 +148,10 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
           <ChevronDown className="w-4 h-4" />
         </div>
       </div>
+      )}
 
       {/* 4 Mini Cards de Metadados em uma única linha */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 my-2">
+      {currentCompany !== 'nio' && <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 my-2">
         {/* Caixa 1: DIRETORIA / ÁREA */}
         <div className="bg-[#FAFBF9] border border-[#CCD8C7] rounded-2xl p-2.5">
           <div className="text-[9px] font-bold text-[#768070] tracking-wider uppercase truncate">
@@ -161,7 +204,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
               : '-'}
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Footer com Status de Fechamento dos Desvios */}
       <div className="flex items-center justify-between pt-2.5 border-t border-[#F6F2EE] text-xs">

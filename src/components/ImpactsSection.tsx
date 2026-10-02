@@ -1,7 +1,7 @@
 import React from 'react';
 import { DRERow, RowJustifications, DeviationImpact } from '../types';
 import { formatCurrencyShort, isWithinReconciliationTolerance, parseCurrencyMillions } from '../utils/formatters';
-import { Plus, Trash2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 interface ImpactsSectionProps {
   selectedRow: DRERow | null;
@@ -90,7 +90,6 @@ const CurrencyInput: React.FC<{
 };
 
 interface ImpactRowProps {
-  cardIndex: number;
   title: string;
   subtitle: string;
   type: 'mom' | 'vsOrcado' | 'ytd';
@@ -116,7 +115,6 @@ interface ImpactRowProps {
 }
 
 const ImpactRowCard: React.FC<ImpactRowProps> = ({
-  cardIndex,
   title,
   subtitle,
   type,
@@ -139,9 +137,6 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
   const pending = deltaValue - sum;
   const isOk = isWithinReconciliationTolerance(pending);
 
-  const isPositiveDelta = deltaValue > 0;
-  const isNegativeDelta = deltaValue < 0;
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch w-full">
       {/* ============================================================
@@ -152,9 +147,6 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
         <div>
           {/* Header da linha */}
           <div className="flex items-center gap-2 mb-1">
-            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#14412A] text-white text-xs font-bold shrink-0">
-              {cardIndex}
-            </span>
             <h3 className="text-base font-bold text-[#14412A] tracking-tight">{title}</h3>
           </div>
           <p className="text-xs text-[#5A6454] mb-3 ml-8">{subtitle}</p>
@@ -183,20 +175,11 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
           </div>
 
           {/* Bloco de Delta (Diferença) & Percentual */}
-          <div className={`rounded-2xl p-3 border ${
-            isPositiveDelta
-              ? 'bg-[#FEF2F2] border-[#FCA5A5]'
-              : isNegativeDelta
-              ? 'bg-[#F0FDF4] border-[#86EFAC]'
-              : 'bg-[#FAFBF9] border-[#E8EDE5]'
-          }`}>
+          <div className="rounded-2xl p-3 border bg-[#FAFBF9] border-[#D5DCD2]">
             <div className="flex items-center justify-between text-xs mb-1">
               <span className="font-bold text-[#14412A]">{deltaLabel}</span>
               <div className="flex items-center gap-1 font-bold text-xs">
-                {isPositiveDelta && <TrendingUp className="w-3.5 h-3.5 text-red-600" />}
-                {isNegativeDelta && <TrendingDown className="w-3.5 h-3.5 text-green-700" />}
-                {deltaValue === 0 && <Minus className="w-3.5 h-3.5 text-gray-500" />}
-                <span className={isPositiveDelta ? 'text-red-700 font-extrabold' : isNegativeDelta ? 'text-green-800 font-extrabold' : 'text-gray-700'}>
+                <span className="text-[#4F5B50] font-extrabold">
                   {deltaPct >= 0 ? `+${deltaPct.toFixed(2)}%` : `${deltaPct.toFixed(2)}%`}
                 </span>
               </div>
@@ -354,13 +337,19 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
   onFieldBlur,
 }) => {
   const momDelta = selectedRow ? selectedRow.realCurrent - selectedRow.realMMinus1 : 0;
-  const momPct = selectedRow ? selectedRow.diffMMinus1Pct : 0;
+  const momPct = selectedRow && selectedRow.realMMinus1 !== 0
+    ? (momDelta / selectedRow.realMMinus1) * 100
+    : 0;
 
   const vsOrcDelta = selectedRow ? selectedRow.realCurrent - selectedRow.orcadoCurrent : 0;
-  const vsOrcPct = selectedRow ? selectedRow.diffOrcadoPct : 0;
+  const vsOrcPct = selectedRow && selectedRow.orcadoCurrent !== 0
+    ? (vsOrcDelta / selectedRow.orcadoCurrent) * 100
+    : 0;
 
   const ytdDelta = selectedRow ? selectedRow.realYTD - selectedRow.orcadoYTD : 0;
-  const ytdPct = selectedRow ? selectedRow.diffOrcadoYTDPct : 0;
+  const ytdPct = selectedRow && selectedRow.orcadoYTD !== 0
+    ? (ytdDelta / selectedRow.orcadoYTD) * 100
+    : 0;
 
   const disabled = !selectedRow || readOnly;
 
@@ -370,7 +359,6 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
           CARD 3: MoM (vs Mês Anterior) - Formato Retangular Full-Width
           ============================================================ */}
       <ImpactRowCard
-        cardIndex={3}
         title="MoM (vs Mês Anterior)"
         subtitle={`Variação do realizado entre ${monthPrevious || 'M-1'} e ${monthCurrent || 'Mês Atual'}`}
         type="mom"
@@ -394,14 +382,13 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
           CARD 4: Mês vs Orçado - Formato Retangular Full-Width
           ============================================================ */}
       <ImpactRowCard
-        cardIndex={4}
         title="Mês vs Orçado"
         subtitle={`Comparativo entre Realizado e Orçado na competência ${monthCurrent || 'Atual'}`}
         type="vsOrcado"
-        metric1Label={`Realizado (${monthCurrent || 'Atual'})`}
-        metric1Value={selectedRow?.realCurrent || 0}
-        metric2Label={`Orçado (${monthCurrent || 'Atual'})`}
-        metric2Value={selectedRow?.orcadoCurrent || 0}
+        metric1Label={`Orçado (${monthCurrent || 'Atual'})`}
+        metric1Value={selectedRow?.orcadoCurrent || 0}
+        metric2Label={`Realizado (${monthCurrent || 'Atual'})`}
+        metric2Value={selectedRow?.realCurrent || 0}
         deltaLabel="Δ Mês (Realizado - Orçado)"
         deltaValue={vsOrcDelta}
         deltaPct={vsOrcPct}
@@ -418,14 +405,13 @@ export const ImpactsSection: React.FC<ImpactsSectionProps> = ({
           CARD 5: YTD vs Orçado - Formato Retangular Full-Width
           ============================================================ */}
       <ImpactRowCard
-        cardIndex={5}
         title="YTD vs Orçado"
         subtitle={`Acumulado no ano desde janeiro até ${monthCurrent || 'Atual'}`}
         type="ytd"
-        metric1Label="Realizado Acumulado YTD"
-        metric1Value={selectedRow?.realYTD || 0}
-        metric2Label="Orçado Acumulado YTD"
-        metric2Value={selectedRow?.orcadoYTD || 0}
+        metric1Label="Orçado Acumulado YTD"
+        metric1Value={selectedRow?.orcadoYTD || 0}
+        metric2Label="Realizado Acumulado YTD"
+        metric2Value={selectedRow?.realYTD || 0}
         deltaLabel="Δ YTD (Realizado YTD - Orçado YTD)"
         deltaValue={ytdDelta}
         deltaPct={ytdPct}

@@ -233,13 +233,13 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
 
   const rows: DRERow[] = Array.from(groups.values()).map((g) => {
     const diffOrcadoAbs = g.realCurrent - g.orcadoCurrent;
-    const diffOrcadoPct = g.orcadoCurrent !== 0 ? (diffOrcadoAbs / Math.abs(g.orcadoCurrent)) * 100 : 0;
+    const diffOrcadoPct = g.orcadoCurrent !== 0 ? (diffOrcadoAbs / g.orcadoCurrent) * 100 : 0;
 
     const diffMMinus1Abs = g.realCurrent - g.realMMinus1;
-    const diffMMinus1Pct = g.realMMinus1 !== 0 ? (diffMMinus1Abs / Math.abs(g.realMMinus1)) * 100 : 0;
+    const diffMMinus1Pct = g.realMMinus1 !== 0 ? (diffMMinus1Abs / g.realMMinus1) * 100 : 0;
 
     const diffOrcadoYTDAbs = g.realYTD - g.orcadoYTD;
-    const diffOrcadoYTDPct = g.orcadoYTD !== 0 ? (diffOrcadoYTDAbs / Math.abs(g.orcadoYTD)) * 100 : 0;
+    const diffOrcadoYTDPct = g.orcadoYTD !== 0 ? (diffOrcadoYTDAbs / g.orcadoYTD) * 100 : 0;
 
     return {
       id: stableRowId([g.diretoria, g.area, g.responsavel, g.n1, g.n2, g.n3]),
@@ -558,13 +558,13 @@ export function convertGcpRowsToWorkbook(
     const orcadoYTD = parseGcpNumber(item['orcadoYTD'] ?? orcadoCurrent * 7.5);
 
     const diffOrcadoAbs = realCurrent - orcadoCurrent;
-    const diffOrcadoPct = orcadoCurrent !== 0 ? (diffOrcadoAbs / Math.abs(orcadoCurrent)) * 100 : 0;
+    const diffOrcadoPct = orcadoCurrent !== 0 ? (diffOrcadoAbs / orcadoCurrent) * 100 : 0;
 
     const diffMMinus1Abs = realCurrent - realMMinus1;
-    const diffMMinus1Pct = realMMinus1 !== 0 ? (diffMMinus1Abs / Math.abs(realMMinus1)) * 100 : 0;
+    const diffMMinus1Pct = realMMinus1 !== 0 ? (diffMMinus1Abs / realMMinus1) * 100 : 0;
 
     const diffOrcadoYTDAbs = realYTD - orcadoYTD;
-    const diffOrcadoYTDPct = orcadoYTD !== 0 ? (diffOrcadoYTDAbs / Math.abs(orcadoYTD)) * 100 : 0;
+    const diffOrcadoYTDPct = orcadoYTD !== 0 ? (diffOrcadoYTDAbs / orcadoYTD) * 100 : 0;
 
     return {
       id: `gcp-${idx + 1}`,

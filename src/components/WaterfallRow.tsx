@@ -2,7 +2,6 @@ import React from 'react';
 import { DRERow, RowJustifications } from '../types';
 import { buildMonthWaterfallData, buildYTDWaterfallData } from '../utils/waterfallGenerator';
 import { WaterfallCanvas } from './WaterfallCanvas';
-import { BarChart3, TrendingUp } from 'lucide-react';
 
 interface WaterfallRowProps {
   selectedRow: DRERow | null;
@@ -43,12 +42,9 @@ export const WaterfallRow: React.FC<WaterfallRowProps> = ({
       <div className="bg-white rounded-3xl p-6 border border-[#D5DCD2] shadow-xs flex flex-col w-full">
         <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#E8EDE5]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#14412A] text-white flex items-center justify-center font-bold text-sm shadow-xs">
-              01
-            </div>
             <div>
               <h3 className="text-base font-bold text-[#14412A]">
-                Gráfico 01: Waterfall Mês (MoM &amp; Vs Orçado)
+                Waterfall Mês (MoM &amp; Vs Orçado)
               </h3>
               <p className="text-xs text-[#5A6454]">
                 Ponte de conciliação do Real M-1 até o Real do Mês, e desvios versus Orçado
@@ -70,12 +66,9 @@ export const WaterfallRow: React.FC<WaterfallRowProps> = ({
       <div className="bg-white rounded-3xl p-6 border border-[#D5DCD2] shadow-xs flex flex-col w-full">
         <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#E8EDE5]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#14412A] text-white flex items-center justify-center font-bold text-sm shadow-xs">
-              02
-            </div>
             <div>
               <h3 className="text-base font-bold text-[#14412A]">
-                Gráfico 02: Waterfall YTD (Acumulado no Ano)
+                Waterfall YTD (Acumulado no Ano)
               </h3>
               <p className="text-xs text-[#5A6454]">
                 Evolução e abertura dos desvios acumulados do ano (Realizado YTD vs Orçado YTD)

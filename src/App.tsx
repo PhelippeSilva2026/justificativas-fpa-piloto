@@ -31,6 +31,17 @@ const AVAILABLE_PERIODS = new Set([
   '2026/6', '2026/7', '2026/8', EDITABLE_JUSTIFICATION_PERIOD,
 ]);
 
+function uniqueSortedValues(rows: DRERow[], key: 'n1' | 'n2' | 'n3' | 'responsavel'): string[] {
+  const values = new Set<string>();
+  rows.forEach((row) => {
+    const value = String(row[key] || '').trim();
+    if (value && value !== '-' && value !== '0') values.add(value);
+  });
+  return Array.from(values).sort((a, b) =>
+    a.localeCompare(b, 'pt-BR', { sensitivity: 'base', numeric: true })
+  );
+}
+
 function cleanFakeJustifications(map: Record<string, RowJustifications> | null | undefined): Record<string, RowJustifications> {
   if (!map || typeof map !== 'object') return {};
   const cleaned: Record<string, RowJustifications> = {};
@@ -69,6 +80,10 @@ export default function App() {
   const [selectedDiretoria, setSelectedDiretoria] = useState<string>('ALL');
   const [selectedArea, setSelectedArea] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'COMPLETED' | 'PENDING'>('ALL');
+  const [selectedNioN1, setSelectedNioN1] = useState<string>('ALL');
+  const [selectedNioN2, setSelectedNioN2] = useState<string>('ALL');
+  const [selectedNioN3, setSelectedNioN3] = useState<string>('ALL');
+  const [selectedNioResponsavel, setSelectedNioResponsavel] = useState<string>('ALL');
 
   const [selectedRowId, setSelectedRowId] = useState<string>('');
 
@@ -374,6 +389,10 @@ export default function App() {
     setSelectedDiretoria('ALL');
     setSelectedArea('ALL');
     setSelectedStatus('ALL');
+    setSelectedNioN1('ALL');
+    setSelectedNioN2('ALL');
+    setSelectedNioN3('ALL');
+    setSelectedNioResponsavel('ALL');
 
     if (isSameCompany) {
       fetchCompanyJustifications(cid, selectedPeriod);
@@ -447,7 +466,7 @@ export default function App() {
         set.add(d);
       }
     });
-    return Array.from(set).sort();
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
   }, [relevantRows]);
 
   const uniqueAreas = useMemo(() => {
@@ -461,7 +480,7 @@ export default function App() {
         }
       }
     });
-    return Array.from(set).sort();
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
   }, [relevantRows, selectedDiretoria]);
 
   const resolveRowJustifications = (row: DRERow | null | undefined): RowJustifications => {
@@ -559,12 +578,81 @@ export default function App() {
   }, [organizationFilteredRows, justificationsMap, justificationsLookupMap]);
 
   // Em seguida aplica o status escolhido sem alterar os contadores do recorte.
-  const filteredRows = useMemo(() => {
+  const statusFilteredRows = useMemo(() => {
     if (selectedStatus === 'ALL') return organizationFilteredRows;
     return organizationFilteredRows.filter((row) =>
       selectedStatus === 'COMPLETED' ? isRowReconciled(row) : !isRowReconciled(row)
     );
   }, [organizationFilteredRows, selectedStatus, justificationsMap, justificationsLookupMap]);
+
+  const nioN1Options = useMemo(() => uniqueSortedValues(statusFilteredRows, 'n1'), [statusFilteredRows]);
+  const nioN2Source = useMemo(
+    () => statusFilteredRows.filter((row) => selectedNioN1 === 'ALL' || row.n1 === selectedNioN1),
+    [statusFilteredRows, selectedNioN1]
+  );
+  const nioN2Options = useMemo(() => uniqueSortedValues(nioN2Source, 'n2'), [nioN2Source]);
+  const nioN3Source = useMemo(
+    () => nioN2Source.filter((row) => selectedNioN2 === 'ALL' || row.n2 === selectedNioN2),
+    [nioN2Source, selectedNioN2]
+  );
+  const nioN3Options = useMemo(() => uniqueSortedValues(nioN3Source, 'n3'), [nioN3Source]);
+  const nioResponsavelSource = useMemo(
+    () => nioN3Source.filter((row) => selectedNioN3 === 'ALL' || row.n3 === selectedNioN3),
+    [nioN3Source, selectedNioN3]
+  );
+  const nioResponsavelOptions = useMemo(
+    () => uniqueSortedValues(nioResponsavelSource, 'responsavel'),
+    [nioResponsavelSource]
+  );
+
+  useEffect(() => {
+    if (activeCompany !== 'nio') return;
+    if (selectedNioN1 !== 'ALL' && !nioN1Options.includes(selectedNioN1)) {
+      setSelectedNioN1('ALL');
+      setSelectedNioN2('ALL');
+      setSelectedNioN3('ALL');
+      setSelectedNioResponsavel('ALL');
+      return;
+    }
+    if (selectedNioN2 !== 'ALL' && !nioN2Options.includes(selectedNioN2)) {
+      setSelectedNioN2('ALL');
+      setSelectedNioN3('ALL');
+      setSelectedNioResponsavel('ALL');
+      return;
+    }
+    if (selectedNioN3 !== 'ALL' && !nioN3Options.includes(selectedNioN3)) {
+      setSelectedNioN3('ALL');
+      setSelectedNioResponsavel('ALL');
+      return;
+    }
+    if (
+      selectedNioResponsavel !== 'ALL'
+      && !nioResponsavelOptions.includes(selectedNioResponsavel)
+    ) {
+      setSelectedNioResponsavel('ALL');
+    }
+  }, [
+    activeCompany,
+    selectedNioN1,
+    selectedNioN2,
+    selectedNioN3,
+    selectedNioResponsavel,
+    nioN1Options,
+    nioN2Options,
+    nioN3Options,
+    nioResponsavelOptions,
+  ]);
+
+  const filteredRows = useMemo(() => {
+    const rows = activeCompany === 'nio'
+      ? nioResponsavelSource.filter(
+          (row) => selectedNioResponsavel === 'ALL' || row.responsavel === selectedNioResponsavel
+        )
+      : statusFilteredRows;
+    return [...rows].sort((a, b) =>
+      (a.n3 || '').localeCompare(b.n3 || '', 'pt-BR', { sensitivity: 'base', numeric: true })
+    );
+  }, [activeCompany, statusFilteredRows, nioResponsavelSource, selectedNioResponsavel]);
 
   // Garantir que a linha selecionada pertença ao subconjunto filtrado
   useEffect(() => {
@@ -1234,12 +1322,28 @@ export default function App() {
                   onSelectDiretoria={(dir) => {
                     setSelectedDiretoria(dir);
                     setSelectedArea('ALL');
+                    setSelectedNioN1('ALL');
+                    setSelectedNioN2('ALL');
+                    setSelectedNioN3('ALL');
+                    setSelectedNioResponsavel('ALL');
                   }}
                   areas={uniqueAreas}
                   selectedArea={selectedArea}
-                  onSelectArea={setSelectedArea}
+                  onSelectArea={(area) => {
+                    setSelectedArea(area);
+                    setSelectedNioN1('ALL');
+                    setSelectedNioN2('ALL');
+                    setSelectedNioN3('ALL');
+                    setSelectedNioResponsavel('ALL');
+                  }}
                   selectedStatus={selectedStatus}
-                  onSelectStatus={setSelectedStatus}
+                  onSelectStatus={(status) => {
+                    setSelectedStatus(status);
+                    setSelectedNioN1('ALL');
+                    setSelectedNioN2('ALL');
+                    setSelectedNioN3('ALL');
+                    setSelectedNioResponsavel('ALL');
+                  }}
                   statusCounts={statusCounts}
                   onOpenGcpModal={() => setIsGcpModalOpen(true)}
                   totalFilteredLines={filteredRows.length}
@@ -1257,6 +1361,32 @@ export default function App() {
                   onAutoReconcileAll={handleAutoReconcileAll}
                   currentCompany={activeCompany}
                   readOnly={isJustificationReadOnly}
+                  nioFilters={{
+                    n1Options: nioN1Options,
+                    n2Options: nioN2Options,
+                    n3Options: nioN3Options,
+                    responsavelOptions: nioResponsavelOptions,
+                    selectedN1: selectedNioN1,
+                    selectedN2: selectedNioN2,
+                    selectedN3: selectedNioN3,
+                    selectedResponsavel: selectedNioResponsavel,
+                    onSelectN1: (value) => {
+                      setSelectedNioN1(value);
+                      setSelectedNioN2('ALL');
+                      setSelectedNioN3('ALL');
+                      setSelectedNioResponsavel('ALL');
+                    },
+                    onSelectN2: (value) => {
+                      setSelectedNioN2(value);
+                      setSelectedNioN3('ALL');
+                      setSelectedNioResponsavel('ALL');
+                    },
+                    onSelectN3: (value) => {
+                      setSelectedNioN3(value);
+                      setSelectedNioResponsavel('ALL');
+                    },
+                    onSelectResponsavel: setSelectedNioResponsavel,
+                  }}
                 />
               </div>
             </div>

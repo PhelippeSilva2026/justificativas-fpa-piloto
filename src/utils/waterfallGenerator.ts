@@ -132,14 +132,14 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
     : row.realCurrent - row.realMMinus1;
   const momPct = row.diffMMinus1Pct !== undefined && row.diffMMinus1Pct !== 0
     ? row.diffMMinus1Pct
-    : (row.realMMinus1 !== 0 ? (momDelta / Math.abs(row.realMMinus1)) * 100 : 0);
+    : (row.realMMinus1 !== 0 ? (momDelta / row.realMMinus1) * 100 : 0);
 
   const vsOrcDelta = row.diffOrcadoAbs !== undefined && row.diffOrcadoAbs !== 0
     ? row.diffOrcadoAbs
     : row.realCurrent - row.orcadoCurrent;
   const vsOrcPct = row.diffOrcadoPct !== undefined && row.diffOrcadoPct !== 0
     ? row.diffOrcadoPct
-    : (row.orcadoCurrent !== 0 ? (vsOrcDelta / Math.abs(row.orcadoCurrent)) * 100 : 0);
+    : (row.orcadoCurrent !== 0 ? (vsOrcDelta / row.orcadoCurrent) * 100 : 0);
 
   const brackets: WaterfallDeltaBracket[] = [
     {
@@ -241,7 +241,7 @@ export function buildYTDWaterfallData(row: DRERow, justifications?: RowJustifica
     : row.realYTD - row.orcadoYTD;
   const ytdPct = row.diffOrcadoYTDPct !== undefined && row.diffOrcadoYTDPct !== 0
     ? row.diffOrcadoYTDPct
-    : (row.orcadoYTD !== 0 ? (ytdDelta / Math.abs(row.orcadoYTD)) * 100 : 0);
+    : (row.orcadoYTD !== 0 ? (ytdDelta / row.orcadoYTD) * 100 : 0);
 
   const brackets: WaterfallDeltaBracket[] = [
     {
