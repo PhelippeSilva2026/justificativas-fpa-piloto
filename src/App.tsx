@@ -33,7 +33,7 @@ const AVAILABLE_PERIODS = new Set([
 
 function uniqueSortedValues(
   rows: DRERow[],
-  key: 'diretoria' | 'area' | 'n1' | 'n2' | 'n3' | 'responsavel'
+  key: 'diretoria' | 'area' | 'n1' | 'n2' | 'n3' | 'responsavel' | 'bpFinanceiro'
 ): string[] {
   const values = new Set<string>();
   rows.forEach((row) => {
@@ -87,6 +87,7 @@ export default function App() {
   const [selectedNioN2, setSelectedNioN2] = useState<string>('ALL');
   const [selectedNioN3, setSelectedNioN3] = useState<string>('ALL');
   const [selectedNioResponsavel, setSelectedNioResponsavel] = useState<string>('ALL');
+  const [selectedNioBpFinanceiro, setSelectedNioBpFinanceiro] = useState<string>('ALL');
 
   const [selectedRowId, setSelectedRowId] = useState<string>('');
 
@@ -396,6 +397,7 @@ export default function App() {
     setSelectedNioN2('ALL');
     setSelectedNioN3('ALL');
     setSelectedNioResponsavel('ALL');
+    setSelectedNioBpFinanceiro('ALL');
 
     if (isSameCompany) {
       fetchCompanyJustifications(cid, selectedPeriod);
@@ -452,10 +454,13 @@ export default function App() {
     }
   };
 
-  // Linhas sem movimento no mês não representam desvios e ficam fora de toda a análise.
+  // Mantém também linhas com movimento no mês anterior, pois elas geram comparação MoM
+  // mesmo quando Real e Orçado do mês atual são zero.
   const relevantRows = useMemo(
     () => workbook.rows.filter((row) =>
-      Math.abs(row.realCurrent) >= 0.01 || Math.abs(row.orcadoCurrent) >= 0.01
+      Math.abs(row.realMMinus1) >= 0.01
+      || Math.abs(row.realCurrent) >= 0.01
+      || Math.abs(row.orcadoCurrent) >= 0.01
     ),
     [workbook.rows]
   );
@@ -500,7 +505,7 @@ export default function App() {
       && isWithinReconciliationTolerance(ytdPending);
   };
 
-  type FacetKey = 'diretoria' | 'area' | 'n1' | 'n2' | 'n3' | 'responsavel';
+  type FacetKey = 'diretoria' | 'area' | 'n1' | 'n2' | 'n3' | 'responsavel' | 'bpFinanceiro';
   const matchesActiveFacets = (row: DRERow, omitted?: FacetKey) => {
     if (omitted !== 'diretoria' && selectedDiretoria !== 'ALL' && row.diretoria !== selectedDiretoria) return false;
     if (omitted !== 'area' && selectedArea !== 'ALL' && row.area !== selectedArea) return false;
@@ -512,6 +517,11 @@ export default function App() {
         omitted !== 'responsavel'
         && selectedNioResponsavel !== 'ALL'
         && row.responsavel !== selectedNioResponsavel
+      ) return false;
+      if (
+        omitted !== 'bpFinanceiro'
+        && selectedNioBpFinanceiro !== 'ALL'
+        && row.bpFinanceiro !== selectedNioBpFinanceiro
       ) return false;
     }
     return true;
@@ -533,7 +543,7 @@ export default function App() {
     () => activeCompany === 'nio'
       ? facetOptions('diretoria')
       : uniqueSortedValues(relevantRows, 'diretoria'),
-    [statusEligibleRows, relevantRows, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
+    [statusEligibleRows, relevantRows, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, selectedNioBpFinanceiro, activeCompany]
   );
   const uniqueAreas = useMemo(
     () => activeCompany === 'nio'
@@ -542,23 +552,27 @@ export default function App() {
           relevantRows.filter((row) => selectedDiretoria === 'ALL' || row.diretoria === selectedDiretoria),
           'area'
         ),
-    [statusEligibleRows, relevantRows, selectedDiretoria, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
+    [statusEligibleRows, relevantRows, selectedDiretoria, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, selectedNioBpFinanceiro, activeCompany]
   );
   const nioN1Options = useMemo(
     () => facetOptions('n1'),
-    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN2, selectedNioN3, selectedNioResponsavel, selectedNioBpFinanceiro, activeCompany]
   );
   const nioN2Options = useMemo(
     () => facetOptions('n2'),
-    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN3, selectedNioResponsavel, activeCompany]
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN3, selectedNioResponsavel, selectedNioBpFinanceiro, activeCompany]
   );
   const nioN3Options = useMemo(
     () => facetOptions('n3'),
-    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2, selectedNioResponsavel, activeCompany]
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2, selectedNioResponsavel, selectedNioBpFinanceiro, activeCompany]
   );
   const nioResponsavelOptions = useMemo(
     () => facetOptions('responsavel'),
-    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, activeCompany]
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioBpFinanceiro, activeCompany]
+  );
+  const nioBpFinanceiroOptions = useMemo(
+    () => facetOptions('bpFinanceiro'),
+    [statusEligibleRows, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
   );
 
   useEffect(() => {
@@ -577,18 +591,19 @@ export default function App() {
       synchronize(selectedNioN2, nioN2Options, setSelectedNioN2);
       synchronize(selectedNioN3, nioN3Options, setSelectedNioN3);
       synchronize(selectedNioResponsavel, nioResponsavelOptions, setSelectedNioResponsavel);
+      synchronize(selectedNioBpFinanceiro, nioBpFinanceiroOptions, setSelectedNioBpFinanceiro);
     }
   }, [
     activeCompany, selectedDiretoria, selectedArea, selectedNioN1, selectedNioN2,
-    selectedNioN3, selectedNioResponsavel, uniqueDiretorias, uniqueAreas,
-    nioN1Options, nioN2Options, nioN3Options, nioResponsavelOptions,
+    selectedNioN3, selectedNioResponsavel, selectedNioBpFinanceiro, uniqueDiretorias, uniqueAreas,
+    nioN1Options, nioN2Options, nioN3Options, nioResponsavelOptions, nioBpFinanceiroOptions,
   ]);
 
   const dimensionFilteredRows = useMemo(
     () => relevantRows.filter((row) => matchesActiveFacets(row)),
     [
       relevantRows, activeCompany, selectedDiretoria, selectedArea, selectedNioN1,
-      selectedNioN2, selectedNioN3, selectedNioResponsavel,
+      selectedNioN2, selectedNioN3, selectedNioResponsavel, selectedNioBpFinanceiro,
     ]
   );
 
@@ -1284,6 +1299,7 @@ export default function App() {
                     setSelectedNioN2('ALL');
                     setSelectedNioN3('ALL');
                     setSelectedNioResponsavel('ALL');
+                    setSelectedNioBpFinanceiro('ALL');
                   }}
                   areas={uniqueAreas}
                   selectedArea={selectedArea}
@@ -1293,6 +1309,7 @@ export default function App() {
                     setSelectedNioN2('ALL');
                     setSelectedNioN3('ALL');
                     setSelectedNioResponsavel('ALL');
+                    setSelectedNioBpFinanceiro('ALL');
                   }}
                   selectedStatus={selectedStatus}
                   onSelectStatus={(status) => {
@@ -1301,6 +1318,7 @@ export default function App() {
                     setSelectedNioN2('ALL');
                     setSelectedNioN3('ALL');
                     setSelectedNioResponsavel('ALL');
+                    setSelectedNioBpFinanceiro('ALL');
                   }}
                   statusCounts={statusCounts}
                   onOpenGcpModal={() => setIsGcpModalOpen(true)}
@@ -1324,26 +1342,32 @@ export default function App() {
                     n2Options: nioN2Options,
                     n3Options: nioN3Options,
                     responsavelOptions: nioResponsavelOptions,
+                    bpFinanceiroOptions: nioBpFinanceiroOptions,
                     selectedN1: selectedNioN1,
                     selectedN2: selectedNioN2,
                     selectedN3: selectedNioN3,
                     selectedResponsavel: selectedNioResponsavel,
+                    selectedBpFinanceiro: selectedNioBpFinanceiro,
                     onSelectN1: (value) => {
                       setSelectedNioN1(value);
                       setSelectedNioN2('ALL');
                       setSelectedNioN3('ALL');
                       setSelectedNioResponsavel('ALL');
+                      setSelectedNioBpFinanceiro('ALL');
                     },
                     onSelectN2: (value) => {
                       setSelectedNioN2(value);
                       setSelectedNioN3('ALL');
                       setSelectedNioResponsavel('ALL');
+                      setSelectedNioBpFinanceiro('ALL');
                     },
                     onSelectN3: (value) => {
                       setSelectedNioN3(value);
                       setSelectedNioResponsavel('ALL');
+                      setSelectedNioBpFinanceiro('ALL');
                     },
                     onSelectResponsavel: setSelectedNioResponsavel,
+                    onSelectBpFinanceiro: setSelectedNioBpFinanceiro,
                   }}
                   onClearFilters={() => {
                     setSelectedDiretoria('ALL');
@@ -1353,6 +1377,7 @@ export default function App() {
                     setSelectedNioN2('ALL');
                     setSelectedNioN3('ALL');
                     setSelectedNioResponsavel('ALL');
+                    setSelectedNioBpFinanceiro('ALL');
                   }}
                 />
               </div>

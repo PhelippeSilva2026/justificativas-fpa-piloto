@@ -147,6 +147,7 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
     diretoria: string;
     area: string;
     responsavel: string;
+    bpFinanceiro: string;
     n1: string;
     n2: string;
     n3: string;
@@ -161,13 +162,14 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
 
   for (const rec of records) {
     const recPeriod = normalizePeriod(rec.anomes);
-    const key = `${rec.diretoria}|${rec.area}|${rec.responsavel}|${rec.n1}|${rec.n2}|${rec.n3}`;
+    const key = `${rec.diretoria}|${rec.area}|${rec.responsavel}|${rec.bpFinanceiro || ''}|${rec.n1}|${rec.n2}|${rec.n3}`;
 
     if (!groups.has(key)) {
       groups.set(key, {
         diretoria: rec.diretoria,
         area: rec.area,
         responsavel: rec.responsavel,
+        bpFinanceiro: rec.bpFinanceiro || '-',
         n1: rec.n1,
         n2: rec.n2,
         n3: rec.n3,
@@ -242,10 +244,11 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
     const diffOrcadoYTDPct = g.orcadoYTD !== 0 ? (diffOrcadoYTDAbs / g.orcadoYTD) * 100 : 0;
 
     return {
-      id: stableRowId([g.diretoria, g.area, g.responsavel, g.n1, g.n2, g.n3]),
+      id: stableRowId([g.diretoria, g.area, g.responsavel, g.bpFinanceiro, g.n1, g.n2, g.n3]),
       diretoria: g.diretoria,
       area: g.area,
       responsavel: g.responsavel,
+      bpFinanceiro: g.bpFinanceiro,
       n1: g.n1,
       n2: g.n2,
       n3: g.n3,
@@ -456,11 +459,8 @@ export function convertGcpRowsToWorkbook(
     const rawRecords: GcpRawRecord[] = rawRows.map((item) => {
       const diretoria = getField(item, ['DIRETORIA_NIO', 'DIRETORIA', 'DIRETOR_NIO'], 'Diretoria Geral');
       const area = getField(item, ['AREA_NIO', 'AREA', 'AREA_RESPONSAVEL_NIO'], 'Área Geral');
-      const responsavel = getField(
-        item,
-        ['RESPONSAVEL_NIO', 'PONTO_FOCAL_FINANCEIRO_NIO', 'DIRETOR_NIO'],
-        'Não informado'
-      );
+      const responsavel = getField(item, ['RESPONSAVEL_NIO'], 'Não informado');
+      const bpFinanceiro = getField(item, ['PONTO_FOCAL_FINANCEIRO_NIO'], '-');
       const n1 = getField(item, ['NIO_N1', 'ARVORE_DF1', 'NIVEL_1', 'NIVEL_0', 'CHAVE_OPEX'], 'Custos & Despesas');
       const n2 = getField(item, ['NIO_N2', 'ARVORE_DF2', 'NIVEL_2', 'CLASSIFICACAO_FPA'], 'Operacional');
       const n3 = getField(
@@ -478,6 +478,7 @@ export function convertGcpRowsToWorkbook(
         diretoria,
         area,
         responsavel,
+        bpFinanceiro,
         n1,
         n2,
         n3,
@@ -537,11 +538,8 @@ export function convertGcpRowsToWorkbook(
   const rows: DRERow[] = rawRows.map((item, idx) => {
     const diretoria = getField(item, ['DIRETORIA_NIO', 'DIRETORIA', 'DIRETOR_NIO', 'AREA_NIO'], 'Diretoria Geral');
     const area = getField(item, ['AREA_NIO', 'AREA', 'AREA_RESPONSAVEL_NIO'], 'Operações');
-    const responsavel = getField(
-      item,
-      ['RESPONSAVEL_NIO', 'PONTO_FOCAL_FINANCEIRO_NIO', 'DIRETOR_NIO'],
-      'Não informado'
-    );
+    const responsavel = getField(item, ['RESPONSAVEL_NIO'], 'Não informado');
+    const bpFinanceiro = getField(item, ['PONTO_FOCAL_FINANCEIRO_NIO'], '-');
     const n1 = getField(item, ['NIO_N1', 'ARVORE_DF1', 'NIVEL_1', 'NIVEL_0', 'CHAVE_OPEX'], 'Custos & Despesas');
     const n2 = getField(item, ['NIO_N2', 'ARVORE_DF2', 'NIVEL_2', 'CLASSIFICACAO_FPA'], 'Operacional');
     const n3 = getField(
@@ -571,6 +569,7 @@ export function convertGcpRowsToWorkbook(
       diretoria,
       area,
       responsavel,
+      bpFinanceiro,
       n1,
       n2,
       n3,

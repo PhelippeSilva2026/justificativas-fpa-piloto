@@ -40,14 +40,17 @@ interface SelectionCardProps {
     n2Options: string[];
     n3Options: string[];
     responsavelOptions: string[];
+    bpFinanceiroOptions: string[];
     selectedN1: string;
     selectedN2: string;
     selectedN3: string;
     selectedResponsavel: string;
+    selectedBpFinanceiro: string;
     onSelectN1: (value: string) => void;
     onSelectN2: (value: string) => void;
     onSelectN3: (value: string) => void;
     onSelectResponsavel: (value: string) => void;
+    onSelectBpFinanceiro: (value: string) => void;
   };
   onClearFilters?: () => void;
 }
@@ -130,6 +133,9 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
           <LevelSelect label="NIO_N2" value={nioFilters.selectedN2} options={nioFilters.n2Options} allLabel="Todos os Níveis 2" onChange={nioFilters.onSelectN2} />
           <LevelSelect label="NIO_N3" value={nioFilters.selectedN3} options={nioFilters.n3Options} allLabel="Todos os Níveis 3" onChange={nioFilters.onSelectN3} />
           <LevelSelect label="Responsável" value={nioFilters.selectedResponsavel} options={nioFilters.responsavelOptions} allLabel="Todos os Responsáveis" onChange={nioFilters.onSelectResponsavel} />
+          <div className="md:col-start-2">
+            <LevelSelect label="BP Financeiro" value={nioFilters.selectedBpFinanceiro} options={nioFilters.bpFinanceiroOptions} allLabel="Todos os BPs Financeiros" onChange={nioFilters.onSelectBpFinanceiro} />
+          </div>
         </div>
       ) : (
       <div className="relative my-3">

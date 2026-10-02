@@ -71,7 +71,7 @@ export const WaterfallRow: React.FC<WaterfallRowProps> = ({
                 Waterfall YTD (Acumulado no Ano)
               </h3>
               <p className="text-xs text-[#5A6454]">
-                Evolução e abertura dos desvios acumulados do ano (Realizado YTD vs Orçado YTD)
+                Evolução e abertura dos desvios acumulados do ano (Real YTD vs Orçado YTD)
               </p>
             </div>
           </div>

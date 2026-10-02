@@ -3,6 +3,7 @@ export interface DRERow {
   diretoria?: string; // DIRETORIA_NIO
   area?: string; // AREA_NIO
   responsavel: string;
+  bpFinanceiro?: string; // PONTO_FOCAL_FINANCEIRO_NIO
   n1: string;
   n2: string;
   n3: string; // Subcategoria - chave
@@ -23,6 +24,7 @@ export interface GcpRawRecord {
   diretoria: string;
   area: string;
   responsavel: string;
+  bpFinanceiro?: string;
   n1: string;
   n2: string;
   n3: string;

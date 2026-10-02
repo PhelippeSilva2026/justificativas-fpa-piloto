@@ -242,10 +242,14 @@ app.post('/api/gcp/bigquery/query', async (req: Request, res: Response) => {
         const hasN1 = colNames.includes('nio_n1');
         const hasN2 = colNames.includes('nio_n2');
         const hasResponsavel = colNames.includes('responsavel_nio');
+        const hasBpFinanceiro = colNames.includes('ponto_focal_financeiro_nio');
         // A NIO usa exclusivamente RESPONSAVEL_NIO; não misturar ponto focal ou colunas corporativas.
         const respCol = hasResponsavel
           ? 'TRIM(COALESCE(NULLIF(RESPONSAVEL_NIO, ""), "-")) AS RESPONSAVEL_NIO'
           : '"-" AS RESPONSAVEL_NIO';
+        const bpCol = hasBpFinanceiro
+          ? 'TRIM(COALESCE(NULLIF(PONTO_FOCAL_FINANCEIRO_NIO, ""), "-")) AS PONTO_FOCAL_FINANCEIRO_NIO'
+          : '"-" AS PONTO_FOCAL_FINANCEIRO_NIO';
 
         const n1Col = hasN1 ? 'COALESCE(NIO_N1, "Custos & Despesas")' : '"Custos & Despesas"';
         const n2Col = hasN2 ? 'COALESCE(NIO_N2, "Operacional")' : '"Operacional"';
@@ -255,6 +259,7 @@ app.post('/api/gcp/bigquery/query', async (req: Request, res: Response) => {
             TRIM(COALESCE(DIRETORIA_NIO, 'Diretoria Geral')) AS DIRETORIA_NIO,
             TRIM(COALESCE(AREA_NIO, 'Área Geral')) AS AREA_NIO,
             ${respCol},
+            ${bpCol},
             TRIM(${n1Col}) AS NIO_N1,
             TRIM(${n2Col}) AS NIO_N2,
             TRIM(COALESCE(NIO_N3, 'Item DRE')) AS NIO_N3,
@@ -266,7 +271,7 @@ app.post('/api/gcp/bigquery/query', async (req: Request, res: Response) => {
             AND AREA_NIO IS NOT NULL
             AND NIO_N3 IS NOT NULL
             AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
-          GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+          GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
           ORDER BY NIO_N1, DIRETORIA_NIO, AREA_NIO, NIO_N3
         `;
       } else {
@@ -384,6 +389,7 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
           TRIM(COALESCE(NULLIF(DIRETORIA_NIO, ''), '-')) AS DIRETORIA_NIO,
           TRIM(COALESCE(NULLIF(AREA_NIO, ''), '-')) AS AREA_NIO,
           TRIM(COALESCE(NULLIF(RESPONSAVEL_NIO, ''), '-')) AS RESPONSAVEL_NIO,
+          TRIM(COALESCE(NULLIF(PONTO_FOCAL_FINANCEIRO_NIO, ''), '-')) AS PONTO_FOCAL_FINANCEIRO_NIO,
           TRIM(COALESCE(NULLIF(NIO_N1, ''), '-')) AS NIO_N1,
           TRIM(COALESCE(NULLIF(NIO_N2, ''), '-')) AS NIO_N2,
           TRIM(COALESCE(NIO_N3, 'Item DRE')) AS NIO_N3,
@@ -394,7 +400,7 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
         WHERE NIO_N3 IS NOT NULL
           AND TRIM(NIO_N3) NOT IN ('', '0', 'SEM_REGRA')
           AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
-        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
         ORDER BY NIO_N1, DIRETORIA_NIO, AREA_NIO, NIO_N3
       `;
 
@@ -403,6 +409,7 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
           '-' AS DIRETORIA_NIO,
           TRIM(COALESCE(AREA, '-')) AS AREA_NIO,
           TRIM(COALESCE(NIVEL_4, '-')) AS RESPONSAVEL_NIO,
+          '-' AS PONTO_FOCAL_FINANCEIRO_NIO,
           TRIM(COALESCE(NIVEL_3, '-')) AS NIO_N1,
           TRIM(COALESCE(NIVEL_2, '-')) AS NIO_N2,
           TRIM(COALESCE(CLASSIFICACAO_FPA, 'Item DRE')) AS NIO_N3,
@@ -418,7 +425,7 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
           AND AREA IS NOT NULL
           AND CLASSIFICACAO_FPA IS NOT NULL
           AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
-        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 10
+        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 11
         ORDER BY COMPANY_ID, AREA_NIO, NIO_N3
       `;
 
