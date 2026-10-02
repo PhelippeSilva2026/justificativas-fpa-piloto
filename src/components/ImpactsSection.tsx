@@ -1,6 +1,6 @@
 import React from 'react';
 import { DRERow, RowJustifications, DeviationImpact } from '../types';
-import { formatCurrencyBRL, formatCurrencyShort, isWithinReconciliationTolerance, parseCurrencyBRL } from '../utils/formatters';
+import { formatCurrencyShort, isWithinReconciliationTolerance, parseCurrencyMillions } from '../utils/formatters';
 import { Plus, Trash2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react';
 
 interface ImpactsSectionProps {
@@ -22,7 +22,7 @@ interface ImpactsSectionProps {
 }
 
 /**
- * Campo especializado de entrada em Moeda BRL (R$ 1.250.000,00)
+ * Campo executivo em milhões. O valor persistido continua integral em reais.
  */
 const CurrencyInput: React.FC<{
   value: number;
@@ -31,28 +31,35 @@ const CurrencyInput: React.FC<{
   onCommit?: () => void;
   className?: string;
 }> = ({ value, disabled, onChange, onCommit, className }) => {
-  const [text, setText] = React.useState(() => formatCurrencyBRL(value));
+  const [text, setText] = React.useState(() => formatCurrencyShort(value, false));
   const [isFocused, setIsFocused] = React.useState(false);
+  const [isDirty, setIsDirty] = React.useState(false);
 
   React.useEffect(() => {
     if (!isFocused) {
-      setText(formatCurrencyBRL(value));
+      setText(formatCurrencyShort(value, false));
     }
   }, [value, isFocused]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newText = e.target.value;
     setText(newText);
-    const parsed = parseCurrencyBRL(newText);
+    setIsDirty(true);
+    const parsed = parseCurrencyMillions(newText);
     onChange(parsed);
   };
 
   const handleBlur = () => {
     setIsFocused(false);
-    const parsed = parseCurrencyBRL(text);
-    onChange(parsed);
-    setText(formatCurrencyBRL(parsed));
-    onCommit?.();
+    if (isDirty) {
+      const parsed = parseCurrencyMillions(text);
+      onChange(parsed);
+      setText(formatCurrencyShort(parsed, false));
+      setIsDirty(false);
+      onCommit?.();
+    } else {
+      setText(formatCurrencyShort(value, false));
+    }
   };
 
   const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
@@ -75,9 +82,9 @@ const CurrencyInput: React.FC<{
       onFocus={handleFocus}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
-      placeholder="R$ 0,00"
+      placeholder="R$ 0,00M"
       className={className}
-      title="Digite o valor em moeda (ex: 1.250.000,00 ou -300.000,00)"
+      title="Digite o valor em milhões (ex.: 4,41 ou -0,30)"
     />
   );
 };

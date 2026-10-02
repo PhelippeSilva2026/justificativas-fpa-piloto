@@ -172,6 +172,13 @@ export function formatCurrencyShort(value: number, includePlusSign: boolean = tr
   return formatCurrencyMillions(value, includePlusSign);
 }
 
+/** Converte uma entrada executiva em milhões para o valor integral em reais. */
+export function parseCurrencyMillions(input: string | number): number {
+  if (typeof input === 'number') return (isNaN(input) ? 0 : input) * 1_000_000;
+  const normalized = String(input || '').replace(/mi(?:lhões)?|m/gi, '').trim();
+  return parseCurrencyBRL(normalized) * 1_000_000;
+}
+
 /** Exibição executiva em milhões, mantendo o valor interno em reais. */
 export function formatCurrencyMillions(value: number, includePlusSign: boolean = false): string {
   if (isNaN(value) || value === null || value === undefined) return 'R$ 0,00M';
