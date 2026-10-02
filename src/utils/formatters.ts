@@ -5,14 +5,8 @@
 export function formatCurrency(value: number, compact: boolean = false): string {
   if (isNaN(value) || value === null || value === undefined) return 'R$ 0,00';
 
-  if (compact && Math.abs(value) >= 1_000_000) {
-    const valInM = value / 1_000_000;
-    return `R$ ${valInM.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}M`;
-  }
-
-  if (compact && Math.abs(value) >= 1_000) {
-    const valInK = value / 1_000;
-    return `R$ ${valInK.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}k`;
+  if (compact) {
+    return formatCurrencyMillions(value, false);
   }
 
   return new Intl.NumberFormat('pt-BR', {
@@ -175,15 +169,21 @@ export function formatShortMonthYear(input: unknown): string {
 
 export function formatCurrencyShort(value: number, includePlusSign: boolean = true): string {
   if (isNaN(value) || value === null || value === undefined) return 'R$ 0';
+  return formatCurrencyMillions(value, includePlusSign);
+}
+
+/** Exibição executiva em milhões, mantendo o valor interno em reais. */
+export function formatCurrencyMillions(value: number, includePlusSign: boolean = false): string {
+  if (isNaN(value) || value === null || value === undefined) return 'R$ 0,00M';
   const sign = value < 0 ? '-' : (value > 0 && includePlusSign ? '+' : '');
-  const absVal = Math.abs(value);
-  if (absVal >= 1_000_000) {
-    return `${sign}R$ ${(absVal / 1_000_000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}M`;
-  }
-  if (absVal >= 1_000) {
-    return `${sign}R$ ${(absVal / 1_000).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}k`;
-  }
-  return `${sign}R$ ${absVal.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const millions = Math.abs(value) / 1_000_000;
+  return `${sign}R$ ${millions.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`;
+}
+
+export const RECONCILIATION_TOLERANCE = 10_000;
+
+export function isWithinReconciliationTolerance(value: number): boolean {
+  return Math.abs(Number(value) || 0) <= RECONCILIATION_TOLERANCE;
 }
 
 export function formatPercent(value: number): string {

@@ -1,6 +1,6 @@
 import React from 'react';
 import { CompanyId, DRERow, RowJustifications } from '../types';
-import { formatCurrencyBRL, formatCurrencyShort } from '../utils/formatters';
+import { formatCurrencyShort, isWithinReconciliationTolerance } from '../utils/formatters';
 import { ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface SelectionCardProps {
@@ -43,18 +43,18 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
     const ytdSum = (justifications.ytdImpacts || []).reduce((acc, i) => acc + i.value, 0);
     const ytdPend = ytdDelta - ytdSum;
 
-    const isMomOk = Math.abs(momPend) < 1;
-    const isVsOrcOk = Math.abs(vsOrcPend) < 1;
-    const isYtdOk = Math.abs(ytdPend) < 1;
+    const isMomOk = isWithinReconciliationTolerance(momPend);
+    const isVsOrcOk = isWithinReconciliationTolerance(vsOrcPend);
+    const isYtdOk = isWithinReconciliationTolerance(ytdPend);
 
     isBalanced = isMomOk && isVsOrcOk && isYtdOk;
     hasPending = !isBalanced;
 
     if (hasPending) {
       const pList: string[] = [];
-      if (!isMomOk) pList.push(`MoM: ${formatCurrencyBRL(momPend)}`);
-      if (!isVsOrcOk) pList.push(`Mês: ${formatCurrencyBRL(vsOrcPend)}`);
-      if (!isYtdOk) pList.push(`YTD: ${formatCurrencyBRL(ytdPend)}`);
+      if (!isMomOk) pList.push(`MoM: ${formatCurrencyShort(momPend, false)}`);
+      if (!isVsOrcOk) pList.push(`Mês: ${formatCurrencyShort(vsOrcPend, false)}`);
+      if (!isYtdOk) pList.push(`YTD: ${formatCurrencyShort(ytdPend, false)}`);
       pendingSummary = pList.join(' | ');
     }
   }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DeviationImpact, DRERow, RowJustifications } from '../types';
-import { formatCurrency, parseNumberInput } from '../utils/formatters';
+import { formatCurrency, isWithinReconciliationTolerance, parseNumberInput } from '../utils/formatters';
 import { Plus, Trash2, CheckCircle2, AlertTriangle, Wand2, ArrowRight } from 'lucide-react';
 
 interface JustificationsPanelProps {
@@ -21,19 +21,19 @@ export const JustificationsPanel: React.FC<JustificationsPanelProps> = ({
   const sumMoM = justifications.momImpacts.reduce((acc, curr) => acc + (curr.value || 0), 0);
   const targetMoM = selectedRow.realCurrent - selectedRow.realMMinus1;
   const diffMoM = targetMoM - sumMoM;
-  const isMoMConsistent = Math.abs(diffMoM) < 1; // Tolerância de R$ 1
+  const isMoMConsistent = isWithinReconciliationTolerance(diffMoM);
 
   // 2. Vs Orçado Mês: Real Atual + sum(Vs Orçado impacts) deve igualar Orçado Atual
   const sumVsOrcado = justifications.vsOrcadoImpacts.reduce((acc, curr) => acc + (curr.value || 0), 0);
   const targetVsOrcado = selectedRow.orcadoCurrent - selectedRow.realCurrent;
   const diffVsOrcado = targetVsOrcado - sumVsOrcado;
-  const isVsOrcadoConsistent = Math.abs(diffVsOrcado) < 1;
+  const isVsOrcadoConsistent = isWithinReconciliationTolerance(diffVsOrcado);
 
   // 3. YTD: Real 2026 YTD + sum(YTD impacts) deve igualar Orçado 2026 YTD
   const sumYTD = justifications.ytdImpacts.reduce((acc, curr) => acc + (curr.value || 0), 0);
   const targetYTD = selectedRow.orcadoYTD - selectedRow.realYTD;
   const diffYTD = targetYTD - sumYTD;
-  const isYTDConsistent = Math.abs(diffYTD) < 1;
+  const isYTDConsistent = isWithinReconciliationTolerance(diffYTD);
 
   // Handlers para adicionar/remover/editar
   const handleAddImpact = (type: 'mom' | 'vsOrcado' | 'ytd') => {
@@ -102,7 +102,7 @@ export const JustificationsPanel: React.FC<JustificationsPanelProps> = ({
     else if (type === 'vsOrcado') residual = diffVsOrcado;
     else residual = diffYTD;
 
-    if (Math.abs(residual) < 1) return;
+    if (isWithinReconciliationTolerance(residual)) return;
 
     const newImpact: DeviationImpact = {
       id: `imp-residual-${Date.now()}`,

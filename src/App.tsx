@@ -8,6 +8,7 @@ import { DRERow, DREWorkbook, RowJustifications, CompanyId } from './types';
 import { exportToPowerPoint } from './utils/pptxExport';
 import { calculateDREFromRaw, convertGcpRowsToWorkbook } from './utils/gcpConnector';
 import { COMPANIES, getCompanyWorkbook, getCompanySampleJustifications } from './utils/companyConfigs';
+import { isWithinReconciliationTolerance } from './utils/formatters';
 import { CompanyPortal } from './components/CompanyPortal';
 import { Navbar } from './components/Navbar';
 import { OrganizationFilterCard } from './components/OrganizationFilterCard';
@@ -498,7 +499,9 @@ export default function App() {
     const momPending = row.realCurrent - row.realMMinus1 - sum(justifications.momImpacts || []);
     const monthPending = row.realCurrent - row.orcadoCurrent - sum(justifications.vsOrcadoImpacts || []);
     const ytdPending = row.realYTD - row.orcadoYTD - sum(justifications.ytdImpacts || []);
-    return Math.abs(momPending) < 1 && Math.abs(monthPending) < 1 && Math.abs(ytdPending) < 1;
+    return isWithinReconciliationTolerance(momPending)
+      && isWithinReconciliationTolerance(monthPending)
+      && isWithinReconciliationTolerance(ytdPending);
   };
 
   // Primeiro aplica o recorte organizacional para calcular os KPIs do conjunto visível.
@@ -753,7 +756,7 @@ export default function App() {
     const momList = [...(currentJustifications.momImpacts || [])];
     const momSum = momList.reduce((acc, i) => acc + (Number(i.value) || 0), 0);
     const momDiff = momDelta - momSum;
-    if (Math.abs(momDiff) >= 1) {
+    if (!isWithinReconciliationTolerance(momDiff)) {
       if (momList.length > 0) {
         momList[momList.length - 1].value = (Number(momList[momList.length - 1].value) || 0) + momDiff;
       } else {
@@ -771,7 +774,7 @@ export default function App() {
     const vsOrcList = [...(currentJustifications.vsOrcadoImpacts || [])];
     const vsOrcSum = vsOrcList.reduce((acc, i) => acc + (Number(i.value) || 0), 0);
     const vsOrcDiff = vsOrcDelta - vsOrcSum;
-    if (Math.abs(vsOrcDiff) >= 1) {
+    if (!isWithinReconciliationTolerance(vsOrcDiff)) {
       if (vsOrcList.length > 0) {
         vsOrcList[vsOrcList.length - 1].value = (Number(vsOrcList[vsOrcList.length - 1].value) || 0) + vsOrcDiff;
       } else {
@@ -789,7 +792,7 @@ export default function App() {
     const ytdList = [...(currentJustifications.ytdImpacts || [])];
     const ytdSum = ytdList.reduce((acc, i) => acc + (Number(i.value) || 0), 0);
     const ytdDiff = ytdDelta - ytdSum;
-    if (Math.abs(ytdDiff) >= 1) {
+    if (!isWithinReconciliationTolerance(ytdDiff)) {
       if (ytdList.length > 0) {
         ytdList[ytdList.length - 1].value = (Number(ytdList[ytdList.length - 1].value) || 0) + ytdDiff;
       } else {

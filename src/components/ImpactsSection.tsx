@@ -1,6 +1,6 @@
 import React from 'react';
 import { DRERow, RowJustifications, DeviationImpact } from '../types';
-import { formatCurrencyBRL, parseCurrencyBRL } from '../utils/formatters';
+import { formatCurrencyBRL, formatCurrencyShort, isWithinReconciliationTolerance, parseCurrencyBRL } from '../utils/formatters';
 import { Plus, Trash2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react';
 
 interface ImpactsSectionProps {
@@ -130,7 +130,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
 }) => {
   const sum = impacts.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
   const pending = deltaValue - sum;
-  const isOk = Math.abs(pending) < 1;
+  const isOk = isWithinReconciliationTolerance(pending);
 
   const isPositiveDelta = deltaValue > 0;
   const isNegativeDelta = deltaValue < 0;
@@ -160,7 +160,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
                 {metric1Label}
               </span>
               <span className="text-xs font-bold text-[#14412A] block mt-0.5 font-mono">
-                {formatCurrencyBRL(metric1Value)}
+                {formatCurrencyShort(metric1Value, false)}
               </span>
             </div>
 
@@ -170,7 +170,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
                 {metric2Label}
               </span>
               <span className="text-xs font-bold text-[#14412A] block mt-0.5 font-mono">
-                {formatCurrencyBRL(metric2Value)}
+                {formatCurrencyShort(metric2Value, false)}
               </span>
             </div>
           </div>
@@ -195,7 +195,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
               </div>
             </div>
             <div className="text-sm font-extrabold font-mono text-[#14412A]">
-              {formatCurrencyBRL(deltaValue)}
+              {formatCurrencyShort(deltaValue, false)}
             </div>
           </div>
         </div>
@@ -204,7 +204,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
         <div className="mt-3 pt-3 border-t border-[#E8EDE5] flex items-center justify-between text-[11px]">
           <div>
             <span className="text-[#768070]">Soma Impactos: </span>
-            <strong className="text-[#14412A] font-mono">{formatCurrencyBRL(sum)}</strong>
+            <strong className="text-[#14412A] font-mono">{formatCurrencyShort(sum, false)}</strong>
           </div>
           <div className="flex items-center gap-1">
             {isOk ? (
@@ -213,7 +213,7 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FEF3C7] text-[#92400E] font-bold text-[10px]" title="Diferença pendente de justificar">
-                <AlertCircle className="w-3 h-3" /> Pendente: {formatCurrencyBRL(pending)}
+                <AlertCircle className="w-3 h-3" /> Pendente: {formatCurrencyShort(pending, false)}
               </span>
             )}
           </div>
