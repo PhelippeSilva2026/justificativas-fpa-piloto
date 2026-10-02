@@ -530,12 +530,19 @@ export default function App() {
   );
 
   const uniqueDiretorias = useMemo(
-    () => facetOptions('diretoria'),
-    [statusEligibleRows, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
+    () => activeCompany === 'nio'
+      ? facetOptions('diretoria')
+      : uniqueSortedValues(relevantRows, 'diretoria'),
+    [statusEligibleRows, relevantRows, selectedArea, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
   );
   const uniqueAreas = useMemo(
-    () => facetOptions('area'),
-    [statusEligibleRows, selectedDiretoria, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
+    () => activeCompany === 'nio'
+      ? facetOptions('area')
+      : uniqueSortedValues(
+          relevantRows.filter((row) => selectedDiretoria === 'ALL' || row.diretoria === selectedDiretoria),
+          'area'
+        ),
+    [statusEligibleRows, relevantRows, selectedDiretoria, selectedNioN1, selectedNioN2, selectedNioN3, selectedNioResponsavel, activeCompany]
   );
   const nioN1Options = useMemo(
     () => facetOptions('n1'),
@@ -563,9 +570,9 @@ export default function App() {
       if (current !== 'ALL' && !options.includes(current)) setter('ALL');
       else if (current === 'ALL' && options.length === 1) setter(options[0]);
     };
-    synchronize(selectedDiretoria, uniqueDiretorias, setSelectedDiretoria);
-    synchronize(selectedArea, uniqueAreas, setSelectedArea);
     if (activeCompany === 'nio') {
+      synchronize(selectedDiretoria, uniqueDiretorias, setSelectedDiretoria);
+      synchronize(selectedArea, uniqueAreas, setSelectedArea);
       synchronize(selectedNioN1, nioN1Options, setSelectedNioN1);
       synchronize(selectedNioN2, nioN2Options, setSelectedNioN2);
       synchronize(selectedNioN3, nioN3Options, setSelectedNioN3);
@@ -1337,6 +1344,15 @@ export default function App() {
                       setSelectedNioResponsavel('ALL');
                     },
                     onSelectResponsavel: setSelectedNioResponsavel,
+                  }}
+                  onClearFilters={() => {
+                    setSelectedDiretoria('ALL');
+                    setSelectedArea('ALL');
+                    setSelectedStatus('ALL');
+                    setSelectedNioN1('ALL');
+                    setSelectedNioN2('ALL');
+                    setSelectedNioN3('ALL');
+                    setSelectedNioResponsavel('ALL');
                   }}
                 />
               </div>

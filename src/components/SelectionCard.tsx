@@ -1,7 +1,7 @@
 import React from 'react';
 import { CompanyId, DRERow, RowJustifications } from '../types';
 import { formatCurrencyShort, isWithinReconciliationTolerance } from '../utils/formatters';
-import { ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ChevronDown, CheckCircle2, AlertCircle, RotateCcw } from 'lucide-react';
 
 const LevelSelect: React.FC<{
   label: string;
@@ -49,6 +49,7 @@ interface SelectionCardProps {
     onSelectN3: (value: string) => void;
     onSelectResponsavel: (value: string) => void;
   };
+  onClearFilters?: () => void;
 }
 
 export const SelectionCard: React.FC<SelectionCardProps> = ({
@@ -61,6 +62,7 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
   currentCompany,
   readOnly = false,
   nioFilters,
+  onClearFilters,
 }) => {
   const isCorporate = currentCompany === 'vtal' || currentCompany === 'tecto';
   // Cálculo de pendências para o status de fechamento
@@ -106,9 +108,20 @@ export const SelectionCard: React.FC<SelectionCardProps> = ({
             {isCorporate ? 'Selecionar Linha de Despesa (Classificação FP&A)' : 'Filtro Nível'}
           </h2>
         </div>
-        <span className="text-xs text-[#8C9283] font-medium">
-          {rows.length} {rows.length === 1 ? 'linha disponível' : 'linhas disponíveis'}
-        </span>
+        <div className="flex items-center gap-3">
+          {currentCompany === 'nio' && onClearFilters && (
+            <button
+              type="button"
+              onClick={onClearFilters}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#CCD8C7] bg-[#FAFBF9] px-2.5 py-1.5 text-[10px] font-bold text-[#14412A] hover:bg-white cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> Limpar filtros
+            </button>
+          )}
+          <span className="text-xs text-[#8C9283] font-medium">
+            {rows.length} {rows.length === 1 ? 'linha disponível' : 'linhas disponíveis'}
+          </span>
+        </div>
       </div>
 
       {currentCompany === 'nio' && nioFilters ? (

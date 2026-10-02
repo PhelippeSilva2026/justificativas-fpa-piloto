@@ -242,16 +242,10 @@ app.post('/api/gcp/bigquery/query', async (req: Request, res: Response) => {
         const hasN1 = colNames.includes('nio_n1');
         const hasN2 = colNames.includes('nio_n2');
         const hasResponsavel = colNames.includes('responsavel_nio');
-        const hasPontoFocal = colNames.includes('ponto_focal_financeiro_nio');
-
-        // Priorizar a coluna RESPONSAVEL_NIO conforme solicitado
-        const respCol = hasResponsavel && hasPontoFocal
-          ? 'TRIM(COALESCE(RESPONSAVEL_NIO, PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-          : hasResponsavel
-          ? 'TRIM(COALESCE(RESPONSAVEL_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-          : hasPontoFocal
-          ? 'TRIM(COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-          : '"Não informado" AS RESPONSAVEL_NIO';
+        // A NIO usa exclusivamente RESPONSAVEL_NIO; não misturar ponto focal ou colunas corporativas.
+        const respCol = hasResponsavel
+          ? 'TRIM(COALESCE(NULLIF(RESPONSAVEL_NIO, ""), "-")) AS RESPONSAVEL_NIO'
+          : '"-" AS RESPONSAVEL_NIO';
 
         const n1Col = hasN1 ? 'COALESCE(NIO_N1, "Custos & Despesas")' : '"Custos & Despesas"';
         const n2Col = hasN2 ? 'COALESCE(NIO_N2, "Operacional")' : '"Operacional"';
@@ -385,33 +379,13 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
         console.warn('[Auto-Load] Não foi possível inspecionar schema:', e);
       }
 
-      const hasResponsavel = colNames.includes('responsavel_nio');
-      const hasPontoFocal = colNames.includes('ponto_focal_financeiro_nio');
-
-      const respCol = hasResponsavel && hasPontoFocal
-        ? 'TRIM(COALESCE(RESPONSAVEL_NIO, PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-        : hasResponsavel
-        ? 'TRIM(COALESCE(RESPONSAVEL_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-        : hasPontoFocal
-        ? 'TRIM(COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, "Não informado")) AS RESPONSAVEL_NIO'
-        : '"Não informado" AS RESPONSAVEL_NIO';
-
-      const hasN1 = colNames.includes('nio_n1');
-      const hasN2 = colNames.includes('nio_n2');
-      const hasDiretoriaNio = colNames.includes('diretoria_nio');
-      const hasAreaNio = colNames.includes('area_nio');
-      const n1Col = hasN1 ? 'COALESCE(NIO_N1, "Custos & Despesas")' : '"Custos & Despesas"';
-      const n2Col = hasN2 ? 'COALESCE(NIO_N2, "Operacional")' : '"Operacional"';
-      const dirNioCol = hasDiretoriaNio ? "COALESCE(DIRETORIA_NIO, 'Diretoria Geral')" : "'Diretoria Geral'";
-      const areaNioCol = hasAreaNio ? "COALESCE(AREA_NIO, 'Área Geral')" : "COALESCE(AREA, 'Área Geral')";
-
       const nioQuery = `
         SELECT
-          TRIM(${dirNioCol}) AS DIRETORIA_NIO,
-          TRIM(${areaNioCol}) AS AREA_NIO,
-          ${respCol},
-          TRIM(${n1Col}) AS NIO_N1,
-          TRIM(${n2Col}) AS NIO_N2,
+          TRIM(COALESCE(NULLIF(DIRETORIA_NIO, ''), '-')) AS DIRETORIA_NIO,
+          TRIM(COALESCE(NULLIF(AREA_NIO, ''), '-')) AS AREA_NIO,
+          TRIM(COALESCE(NULLIF(RESPONSAVEL_NIO, ''), '-')) AS RESPONSAVEL_NIO,
+          TRIM(COALESCE(NULLIF(NIO_N1, ''), '-')) AS NIO_N1,
+          TRIM(COALESCE(NULLIF(NIO_N2, ''), '-')) AS NIO_N2,
           TRIM(COALESCE(NIO_N3, 'Item DRE')) AS NIO_N3,
           TRIM(CAST(anomes AS STRING)) AS anomes,
           TRIM(CAST(TIPO AS STRING)) AS TIPO,
