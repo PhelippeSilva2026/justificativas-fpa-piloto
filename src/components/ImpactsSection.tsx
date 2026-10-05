@@ -198,12 +198,12 @@ const ImpactRowCard: React.FC<ImpactRowProps> = ({
           </div>
           <div className="flex items-center gap-1">
             {isOk ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#DCFCE7] text-[#166534] font-bold text-[10px]">
-                <CheckCircle2 className="w-3 h-3" /> Reconciliado
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#DCFCE7] text-[#166534] font-bold text-xs">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Reconciliado
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FEF3C7] text-[#92400E] font-bold text-[10px]" title="Diferença pendente de justificar">
-                <AlertCircle className="w-3 h-3" /> Pendente: {formatCurrencyShort(pending, false)}
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#FEF3C7] text-[#92400E] font-bold text-xs" title="Diferença pendente de justificar">
+                <AlertCircle className="w-3.5 h-3.5" /> Pendente: {formatCurrencyShort(pending, false)}
               </span>
             )}
           </div>

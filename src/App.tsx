@@ -471,6 +471,9 @@ export default function App() {
       vsOrcadoImpacts: [],
       ytdImpacts: [],
     };
+    // Na NIO, o histórico anterior a setembro permanece preservado no armazenamento,
+    // mas não é exibido nas páginas de consulta.
+    if (activeCompany === 'nio' && selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD) return empty;
     if (!row) return empty;
     if (justificationsMap[row.id]) return justificationsMap[row.id];
 
@@ -532,7 +535,7 @@ export default function App() {
     return relevantRows.filter((row) =>
       selectedStatus === 'COMPLETED' ? isRowReconciled(row) : !isRowReconciled(row)
     );
-  }, [relevantRows, selectedStatus, justificationsMap, justificationsLookupMap]);
+  }, [relevantRows, selectedStatus, justificationsMap, justificationsLookupMap, activeCompany, selectedPeriod]);
 
   const facetOptions = (key: FacetKey) => uniqueSortedValues(
     statusEligibleRows.filter((row) => matchesActiveFacets(row, key)),
@@ -614,7 +617,7 @@ export default function App() {
       completed,
       pending: dimensionFilteredRows.length - completed,
     };
-  }, [dimensionFilteredRows, justificationsMap, justificationsLookupMap]);
+  }, [dimensionFilteredRows, justificationsMap, justificationsLookupMap, activeCompany, selectedPeriod]);
 
   const filteredRows = useMemo(() => {
     const rows = selectedStatus === 'ALL'
@@ -625,7 +628,7 @@ export default function App() {
     return [...rows].sort((a, b) =>
       (a.n3 || '').localeCompare(b.n3 || '', 'pt-BR', { sensitivity: 'base', numeric: true })
     );
-  }, [dimensionFilteredRows, selectedStatus, justificationsMap, justificationsLookupMap]);
+  }, [dimensionFilteredRows, selectedStatus, justificationsMap, justificationsLookupMap, activeCompany, selectedPeriod]);
 
   // Garantir que a linha selecionada pertença ao subconjunto filtrado
   useEffect(() => {
