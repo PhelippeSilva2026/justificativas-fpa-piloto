@@ -1145,6 +1145,7 @@ interface StoredPeriodJustifications {
   momImpacts?: StoredImpactItem[];
   vsOrcadoImpacts?: StoredImpactItem[];
   ytdImpacts?: StoredImpactItem[];
+  suppressHistorical?: boolean;
 }
 
 const hasMeaningfulJustificationText = (impacts: unknown): boolean => {
@@ -1211,6 +1212,17 @@ function resolveEntryForPeriod(
   if (candidatePeriods.length === 0) return null;
 
   const exact = normalizedPeriods[targetNorm];
+
+  // Uma limpeza explícita precisa prevalecer sobre a herança histórica. Isso permite
+  // zerar uma competência sem apagar os comentários preservados nos meses anteriores.
+  if (exact?.suppressHistorical === true) {
+    return {
+      momImpacts: Array.isArray(exact.momImpacts) ? exact.momImpacts.map((item) => ({ ...item })) : [],
+      vsOrcadoImpacts: Array.isArray(exact.vsOrcadoImpacts) ? exact.vsOrcadoImpacts.map((item) => ({ ...item })) : [],
+      ytdImpacts: Array.isArray(exact.ytdImpacts) ? exact.ytdImpacts.map((item) => ({ ...item })) : [],
+      suppressHistorical: true,
+    };
+  }
 
   // 1. MoM (vs Mês Anterior): exclusivo do mês selecionado. Se não houver no próprio mês, fica vazio ([]).
   const momImpacts: StoredImpactItem[] =
