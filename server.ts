@@ -1489,7 +1489,7 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
         AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
         AND SAFE_CAST(REGEXP_EXTRACT(CAST(anomes AS STRING), r'^(\\d{4})') AS INT64) = @year
       GROUP BY 1,2,3,4,5,6,7,8,9,10`;
-    const physicalOrigins = companyId === 'nio' ? ['FTTH'] : companyId === 'tecto'
+    const physicalOrigins = companyId === 'nio' ? ['Realizado FTTH', 'Orçado FTTH'] : companyId === 'tecto'
       ? ['Data Centers'] : ['Business Support', 'Mobile Solutions', 'VOIP', 'Wholesale'];
     const physicalQuery = `
       SELECT TRIM(CAST(INDICADOR AS STRING)) AS indicador, TRIM(CAST(TIPO AS STRING)) AS tipo,
