@@ -304,16 +304,26 @@ export function renderWaterfallToCanvas(
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, width, height);
 
-  // Margens executivas equilibradas
+  const { bars, maxVal, minVal } = config;
+  const totalBars = bars.length;
+  if (totalBars === 0) return;
+
+  // Adapta a tipografia e a área dos rótulos à quantidade de barras.
+  // A mesma rotina atende a pré-visualização e a imagem incorporada no PPT.
+  const isDense = totalBars >= 8;
+  const isVeryDense = totalBars >= 12;
+  const axisFontSize = isVeryDense ? 7.5 : isDense ? 8.5 : 11;
+  const valueFontSize = isVeryDense ? 8.5 : isDense ? 10 : 13;
+  const maxAxisLines = isDense ? 3 : 2;
+
+  // Margens executivas equilibradas, com espaço adicional para rótulos densos
   const marginTop = Math.round(54 * scale);
-  const marginBottom = Math.round(58 * scale);
+  const marginBottom = Math.round((isDense ? 78 : 58) * scale);
   const marginLeft = Math.round(42 * scale);
   const marginRight = Math.round(48 * scale);
   const chartW = width - marginLeft - marginRight;
   const chartH = height - marginTop - marginBottom;
 
-  const { bars, maxVal, minVal } = config;
-  const totalBars = bars.length;
   if (totalBars === 0 || chartW <= 0 || chartH <= 0) return;
 
   const slotWidth = chartW / totalBars;
@@ -418,10 +428,12 @@ export function renderWaterfallToCanvas(
 
     ctx.shadowColor = 'transparent';
 
-    // Rótulo numérico nítido estritamente acima de cada barra (13px, negrito, alto contraste)
-    const labelY = yTop - Math.round(8 * scale);
+    // Em gráficos densos, reduz e alterna levemente a altura dos números para
+    // impedir a sobreposição entre valores de barras vizinhas.
+    const valueStagger = isDense ? (idx % 2) * Math.round(12 * scale) : 0;
+    const labelY = yTop - Math.round(8 * scale) - valueStagger;
     ctx.fillStyle = '#0F2F1B';
-    ctx.font = `bold ${Math.round(13 * scale)}px ${systemFont}`;
+    ctx.font = `bold ${Math.round(valueFontSize * scale)}px ${systemFont}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     
@@ -430,19 +442,18 @@ export function renderWaterfallToCanvas(
       : formatCurrencyShort(bar.endValue, false);
     ctx.fillText(valText, Math.round(x + barWidth / 2), labelY);
 
-    // Rótulo do eixo X abaixo da barra: 11px negrito com excelente contraste (não embaça)
+    // Rótulo do eixo X: quebra por largura real do slot, em até três linhas
+    // quando há muitas justificativas.
     ctx.fillStyle = '#192B1C';
-    ctx.font = `600 ${Math.round(11 * scale)}px ${systemFont}`;
+    ctx.font = `600 ${Math.round(axisFontSize * scale)}px ${systemFont}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
 
-    const maxChars = Math.max(12, Math.floor(slotWidth / (6 * scale)));
-    const labelLines = wrapText(bar.label, maxChars);
-    if (labelLines.length > 2) {
-      labelLines[1] = labelLines[1].length > maxChars - 2 ? labelLines[1].substring(0, maxChars - 3) + '...' : labelLines[1] + '...';
-    }
-    labelLines.slice(0, 2).forEach((line, lineIdx) => {
-      ctx.fillText(line, Math.round(x + barWidth / 2), height - marginBottom + Math.round(10 * scale) + (lineIdx * Math.round(14 * scale)));
+    const labelMaxWidth = Math.max(Math.round(24 * scale), Math.round(slotWidth - 5 * scale));
+    const labelLines = wrapTextToWidth(ctx, bar.label, labelMaxWidth, maxAxisLines);
+    const lineHeight = Math.round((axisFontSize + 2) * scale);
+    labelLines.forEach((line, lineIdx) => {
+      ctx.fillText(line, Math.round(x + barWidth / 2), height - marginBottom + Math.round(9 * scale) + (lineIdx * lineHeight));
     });
   });
 
@@ -544,24 +555,54 @@ function drawRoundedRect(
   ctx.closePath();
 }
 
-function wrapText(text: string, maxCharsPerLine: number): string[] {
-  if (!text) return [''];
-  if (text.length <= maxCharsPerLine) return [text];
+function wrapTextToWidth(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  const clean = String(text || '').trim();
+  if (!clean) return [''];
 
-  const words = text.split(' ');
+  const words = clean.split(/\s+/);
   const lines: string[] = [];
-  let currentLine = '';
+  let current = '';
 
-  words.forEach((w) => {
-    if ((currentLine + ' ' + w).trim().length <= maxCharsPerLine) {
-      currentLine = (currentLine + ' ' + w).trim();
-    } else {
-      if (currentLine) lines.push(currentLine);
-      currentLine = w;
+  const pushWordChunks = (word: string) => {
+    let chunk = '';
+    for (const char of word) {
+      const candidate = chunk + char;
+      if (chunk && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(chunk);
+        chunk = char;
+      } else {
+        chunk = candidate;
+      }
     }
-  });
-  if (currentLine) lines.push(currentLine);
-  return lines;
+    return chunk;
+  };
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) lines.push(current);
+    current = ctx.measureText(word).width <= maxWidth ? word : pushWordChunks(word);
+  }
+  if (current) lines.push(current);
+
+  if (lines.length <= maxLines) return lines;
+
+  const visible = lines.slice(0, maxLines);
+  let last = visible[maxLines - 1];
+  while (last.length > 1 && ctx.measureText(`${last}…`).width > maxWidth) {
+    last = last.slice(0, -1);
+  }
+  visible[maxLines - 1] = `${last}…`;
+  return visible;
 }
 
 /**
