@@ -62,32 +62,40 @@ export async function buildNioExecutiveDocx(params: {
   const previousShortYear = String(previousYear).slice(-2);
   const priorYearShort = String(year - 1).slice(-2);
   const d = buildNioDynamicPageData({ period, financialRows, physicalRows });
+  const displayToNumber = (value: string) => {
+    const clean = String(value || '').trim();
+    if (!clean || clean === '-') return 0;
+    const negative = clean.startsWith('(') || clean.startsWith('-');
+    const numeric = Number(clean.replace(/[()%-]/g, '').replace(/\./g, '').replace(',', '.')) || 0;
+    return negative ? -numeric : numeric;
+  };
+  const pl = (label: string) => d.plRows.find((row) => row.label === label);
+  const phys = (label: string) => physicalRows?.find((row) => row.indicator === label);
+  const basePhysical = phys('Base EOP');
+  const churnPhysical = phys('Churn');
+  const churnRate = (churnValue?: number, baseValue?: number) => baseValue ? ((churnValue || 0) / baseValue) * 100 : 0;
 
-  // 1. Gerar os 8 gráficos oficiais em PNG de alta resolução
+  // Gráficos oficiais alimentados exclusivamente pelas bases da competência selecionada.
   const [
     chartEbitdaMes,
     chartEbitdaYtd,
     chartNetAdds,
     chartGrossAdds,
     chartChurn,
-    chartNetRevenue,
-    chartArpu,
-    chartUnitarioCac,
   ] = await Promise.all([
     renderWaterfallChart({
       title: `${monthName}/${shortYear} (R$ Mn)`,
       width: 500,
       height: 180,
       bars: [
-        { label: 'EBITDA orç.', value: -4.7, isTotal: true },
-        { label: 'Receita', value: -27.4 },
-        { label: 'Rel. receita', value: 3.4 },
-        { label: 'Custo servir', value: -2.9 },
-        { label: 'Adm', value: -0.6 },
-        { label: 'CAC', value: 15.7 },
-        { label: 'One-offs', value: -1.8 },
-        { label: 'Pessoal', value: 0.5 },
-        { label: 'EBITDA real', value: -17.9, isTotal: true },
+        { label: 'EBITDA orç.', value: displayToNumber(pl('EBITDA')?.mesOrc || '0'), isTotal: true },
+        { label: 'Receita', value: displayToNumber(pl('Receita líquida')?.mesDelta || '0') },
+        { label: 'Rel. receita', value: -displayToNumber(pl('(-) Custos relacionados à receita')?.mesDelta || '0') },
+        { label: 'Custo servir', value: -displayToNumber(pl('(-) Custo de servir')?.mesDelta || '0') },
+        { label: 'Adm', value: -displayToNumber(pl('(-) Custos administrativos')?.mesDelta || '0') },
+        { label: 'CAC', value: -displayToNumber(pl('(-) Custo de aquisição (CAC)')?.mesDelta || '0') },
+        { label: 'Pessoal', value: -displayToNumber(pl('(-) Custos com pessoal')?.mesDelta || '0') },
+        { label: 'EBITDA real', value: displayToNumber(pl('EBITDA')?.mesReal || '0'), isTotal: true },
       ],
     }),
     renderWaterfallChart({
@@ -95,91 +103,42 @@ export async function buildNioExecutiveDocx(params: {
       width: 500,
       height: 180,
       bars: [
-        { label: 'EBITDA orç.', value: 6.0, isTotal: true },
-        { label: 'Receita', value: -100.6 },
-        { label: 'Rel. receita', value: 39.7 },
-        { label: 'Custo servir', value: -38.0 },
-        { label: 'Adm', value: -36.1 },
-        { label: 'CAC', value: 80.7 },
-        { label: 'One-offs', value: 34.8 },
-        { label: 'Pessoal', value: 13.7 },
-        { label: 'EBITDA real', value: 0.1, isTotal: true },
+        { label: 'EBITDA orç.', value: displayToNumber(pl('EBITDA')?.ytdOrc || '0'), isTotal: true },
+        { label: 'Receita', value: displayToNumber(pl('Receita líquida')?.ytdDelta || '0') },
+        { label: 'Rel. receita', value: -displayToNumber(pl('(-) Custos relacionados à receita')?.ytdDelta || '0') },
+        { label: 'Custo servir', value: -displayToNumber(pl('(-) Custo de servir')?.ytdDelta || '0') },
+        { label: 'Adm', value: -displayToNumber(pl('(-) Custos administrativos')?.ytdDelta || '0') },
+        { label: 'CAC', value: -displayToNumber(pl('(-) Custo de aquisição (CAC)')?.ytdDelta || '0') },
+        { label: 'Pessoal', value: -displayToNumber(pl('(-) Custos com pessoal')?.ytdDelta || '0') },
+        { label: 'EBITDA real', value: displayToNumber(pl('EBITDA')?.ytdReal || '0'), isTotal: true },
       ],
     }),
     renderBarWithLineChart({
       title: 'Net Adds (mil)',
       width: 320,
       height: 140,
-      labels: ['A25', 'J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', "D'26"],
-      bars: [-35, -20, -10, 5, 8, 12, 18, 20, 21, 25, 28, 32, 35],
-      forecastLine: [-30, -18, -8, 8, 12, 16, 22, 24, 25, 28, 30, 34, 38],
-      highlightLast: { label: `${monthShort}: real 21k | orç. 46k` },
+      labels: [`${previousMonthShort}/${previousShortYear}`, `${monthShort}/${shortYear}`],
+      bars: [(phys('Net Adds')?.realPrevious || 0) / 1_000, (phys('Net Adds')?.real || 0) / 1_000],
+      forecastLine: [(phys('Net Adds')?.budgetPrevious || 0) / 1_000, (phys('Net Adds')?.budget || 0) / 1_000],
+      highlightLast: { label: `${monthShort}: real ${((phys('Net Adds')?.real || 0) / 1_000).toFixed(1)}k | orç. ${((phys('Net Adds')?.budget || 0) / 1_000).toFixed(1)}k` },
     }),
     renderBarWithLineChart({
       title: 'Gross Adds (mil)',
       width: 320,
       height: 140,
-      labels: ['A25', 'J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', "D'26"],
-      bars: [85, 88, 92, 95, 102, 108, 114, 114, 114, 118, 120, 122, 125],
-      forecastLine: [90, 92, 96, 100, 105, 110, 112, 110, 104, 112, 115, 118, 120],
-      highlightLast: { label: `${monthShort}: real 114k | orç. 124k` },
+      labels: [`${previousMonthShort}/${previousShortYear}`, `${monthShort}/${shortYear}`],
+      bars: [(phys('Gross Adds')?.realPrevious || 0) / 1_000, (phys('Gross Adds')?.real || 0) / 1_000],
+      forecastLine: [(phys('Gross Adds')?.budgetPrevious || 0) / 1_000, (phys('Gross Adds')?.budget || 0) / 1_000],
+      highlightLast: { label: `${monthShort}: real ${((phys('Gross Adds')?.real || 0) / 1_000).toFixed(1)}k | orç. ${((phys('Gross Adds')?.budget || 0) / 1_000).toFixed(1)}k` },
     }),
     renderLineChart({
       title: 'Churn (% a.m.)',
       width: 320,
       height: 140,
-      labels: ["Jan'26", 'F', 'M', 'A', 'M', 'J', 'J', 'A'],
+      labels: [`${previousMonthShort}/${previousShortYear}`, `${monthShort}/${shortYear}`],
       series: [
-        { name: 'Churn total', color: '#16A34A', data: [2.5, 2.6, 2.7, 2.65, 2.75, 2.7, 2.75, 2.79] },
-        { name: 'Voluntário', color: '#6B7280', data: [1.8, 1.85, 1.9, 1.88, 1.95, 1.9, 1.92, 1.96] },
-        { name: 'Orçado', color: '#10B981', strokeDasharray: '3,3', data: [2.3, 2.3, 2.3, 2.3, 2.29, 2.29, 2.29, 2.29] },
-      ],
-    }),
-    renderWaterfallChart({
-      title: 'Net Revenue vs orçado (R$ Mn)',
-      width: 500,
-      height: 170,
-      bars: [
-        { label: 'Receita orç.', value: 316.5, isTotal: true },
-        { label: 'Net Adds', value: -8.9 },
-        { label: 'Base fat.', value: -9.3 },
-        { label: '+1 fatura', value: -0.1 },
-        { label: 'Price Up', value: -2.6 },
-        { label: 'Price Down', value: -2.0 },
-        { label: 'Redutores', value: -0.9 },
-        { label: 'Outros', value: -3.5 },
-        { label: 'Receita real', value: 289.1, isTotal: true },
-      ],
-    }),
-    renderWaterfallChart({
-      title: 'ARPU vs orçado (R$)',
-      width: 500,
-      height: 170,
-      bars: [
-        { label: 'ARPU orç.', value: 92.91, isTotal: true },
-        { label: 'Price Up', value: -0.76 },
-        { label: 'Price Down', value: -0.60 },
-        { label: 'Gross/Churn', value: -0.82 },
-        { label: '% base fat.', value: -2.74 },
-        { label: '+1 fatura', value: -0.03 },
-        { label: 'Redutores', value: -0.28 },
-        { label: 'Outros', value: -0.12 },
-        { label: 'ARPU real', value: 87.56, isTotal: true },
-      ],
-    }),
-    renderWaterfallChart({
-      title: 'Unitário de vendas ex-M&A (R$)',
-      width: 480,
-      height: 160,
-      bars: [
-        { label: `${previousMonthShort}/${previousShortYear}`, value: 599, isTotal: true },
-        { label: 'Camp PAP', value: 5 },
-        { label: 'Prod EPS', value: 1 },
-        { label: 'Camp Dealers', value: 2 },
-        { label: 'Inbound TLV', value: 5 },
-        { label: 'Camp assist.', value: 1 },
-        { label: 'Não assist.', value: 13 },
-        { label: `${monthShort}/${shortYear}`, value: 631, isTotal: true },
+        { name: 'Churn total', color: '#16A34A', data: [churnRate(churnPhysical?.realPrevious, basePhysical?.realPrevious), churnRate(churnPhysical?.real, basePhysical?.real)] },
+        { name: 'Orçado', color: '#10B981', strokeDasharray: '3,3', data: [churnRate(churnPhysical?.budgetPrevious, basePhysical?.budgetPrevious), churnRate(churnPhysical?.budget, basePhysical?.budget)] },
       ],
     }),
   ]);
@@ -447,15 +406,6 @@ export async function buildNioExecutiveDocx(params: {
   // ==========================================
   children.push(
     nioHeading('4. Receita e ARPU'),
-    new Paragraph({
-      spacing: { before: 40, after: 60 },
-      alignment: AlignmentType.CENTER,
-      children: [
-        new ImageRun({ data: chartNetRevenue, transformation: { width: 330, height: 115 }, type: 'png' }),
-        new TextRun({ text: '    ' }),
-        new ImageRun({ data: chartArpu, transformation: { width: 330, height: 115 }, type: 'png' }),
-      ],
-    }),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       borders: thinBorders,
@@ -464,7 +414,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('Indicadores', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 28 }),
-            formatCell('Jul/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${previousMonthShort}/${previousShortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell(`${monthShort}/${shortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -652,13 +602,6 @@ export async function buildNioExecutiveDocx(params: {
   // ==========================================
   children.push(
     nioSubheading('5.4 CAC · unitário e comissões'),
-    new Paragraph({
-      spacing: { before: 20, after: 60 },
-      children: [
-        new ImageRun({ data: chartUnitarioCac, transformation: { width: 330, height: 110 }, type: 'png' }),
-      ],
-    }),
-    nioBody(narrative.cacUnitaryAnalysis.unitaryIntro),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       borders: thinBorders,
@@ -668,7 +611,7 @@ export async function buildNioExecutiveDocx(params: {
           children: [
             formatCell('Comissão unitária por canal (R$)', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 35 }),
             formatCell('Mix real | orç.', { header: true, align: AlignmentType.CENTER, fill: NIO_GREEN, bold: true }),
-            formatCell('Jul/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${previousMonthShort}/${previousShortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell(`${monthShort}/${shortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ vs orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -688,11 +631,7 @@ export async function buildNioExecutiveDocx(params: {
         ),
       ],
     }),
-    nioSubheading('Leitura por canal'),
-    nioBody(narrative.cacUnitaryAnalysis.channelReading),
-    nioSubheading('Comissões e diferimento'),
-    nioBody(narrative.cacUnitaryAnalysis.commissionsAndDeferral),
-    nioSubheading('5.5 One-offs e custos com pessoal'),
+    nioSubheading('5.5 Custos com pessoal'),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       borders: thinBorders,

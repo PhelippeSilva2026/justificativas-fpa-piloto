@@ -46,6 +46,10 @@ export interface PhysicalReportRow {
   indicator: string;
   real: number;
   budget: number;
+  realPrevious?: number;
+  budgetPrevious?: number;
+  realYtd?: number;
+  budgetYtd?: number;
 }
 
 interface Impact {

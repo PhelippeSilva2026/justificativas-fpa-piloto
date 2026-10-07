@@ -1460,7 +1460,7 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
           ? "COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, 'Não informado')"
           : "'Não informado'";
     const companyFilter = companyId === 'nio'
-      ? "NIO_N3 IS NOT NULL AND TRIM(NIO_N3) NOT IN ('', '0', 'SEM_REGRA')"
+      ? "LOWER(TRIM(NIVEL_2)) = 'nio' AND NIO_N1 IS NOT NULL AND TRIM(NIO_N1) NOT IN ('', '0', 'SEM_REGRA') AND NIO_N3 IS NOT NULL AND TRIM(NIO_N3) NOT IN ('', '0', 'SEM_REGRA')"
       : companyId === 'tecto'
         ? "TRIM(NIVEL_2) = 'Tecto' AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL"
         : "TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom') AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL";
@@ -1493,13 +1493,14 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
       ? ['Data Centers'] : ['Business Support', 'Mobile Solutions', 'VOIP', 'Wholesale'];
     const physicalQuery = `
       SELECT TRIM(CAST(INDICADOR AS STRING)) AS indicador, TRIM(CAST(TIPO AS STRING)) AS tipo,
+        TRIM(CAST(ANOMES AS STRING)) AS anomes, TRIM(CAST(CP AS STRING)) AS cp,
         SUM(SAFE_CAST(VALOR AS FLOAT64)) AS valor
       FROM \`vtal-fpea-prd.agente_fpa.fFisicosBaseUnica\`
-      WHERE (TRIM(CAST(ANOMES AS STRING)) IN (@period, @paddedPeriod, @compactPeriod)
-        OR STARTS_WITH(REGEXP_REPLACE(CAST(ANOMES AS STRING), r'[^0-9]', ''), @compactPeriod))
+      WHERE SAFE_CAST(REGEXP_EXTRACT(CAST(ANOMES AS STRING), r'^(\\d{4})') AS INT64) = @year
         AND TRIM(CAST(ORIGEM AS STRING)) IN UNNEST(@origins)
         AND INDICADOR IS NOT NULL
-      GROUP BY 1,2 ORDER BY 1,2`;
+        ${companyId === 'nio' ? "AND UPPER(TRIM(CAST(CP AS STRING))) = 'ANCHOR'" : ''}
+      GROUP BY 1,2,3,4 ORDER BY 3,1,2`;
 
     const runQuery = async (query: string, params: Record<string, unknown>) => {
       const options = { query, params, location: 'southamerica-east1' };
@@ -1515,7 +1516,7 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
     const compactPeriod = `${year}${String(month).padStart(2, '0')}`;
     const [rawFinancial, rawPhysical, justifications] = await Promise.all([
       runQuery(financialQuery, { year }),
-      runQuery(physicalQuery, { period, paddedPeriod, compactPeriod, origins: physicalOrigins }),
+      runQuery(physicalQuery, { year, origins: physicalOrigins }),
       loadReportJustifications(companyId, period),
     ]);
 
@@ -1614,17 +1615,57 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
         };
       });
 
-    const physicalMap = new Map<string, PhysicalReportRow>();
-    for (const row of rawPhysical) {
-      const indicator = String(row.indicador || 'Indicador');
-      const current = physicalMap.get(indicator) || { indicator, real: 0, budget: 0 };
-      const kind = reportValueKind(row.tipo);
-      if (kind === 'real') current.real += Number(row.valor) || 0;
-      if (kind === 'budget') current.budget += Number(row.valor) || 0;
-      physicalMap.set(indicator, current);
+    const previousMonth = month === 1 ? 12 : month - 1;
+    const physicalRows: PhysicalReportRow[] = [];
+    if (companyId === 'nio') {
+      const aggregatePhysical = (indicator: string, kind: 'real' | 'budget', scope: 'current' | 'previous' | 'ytd') => {
+        return rawPhysical.reduce((total, row) => {
+          if (String(row.indicador || '').trim().toUpperCase() !== indicator) return total;
+          if (reportValueKind(row.tipo) !== kind) return total;
+          const normalized = normalizeReportPeriod(row.anomes);
+          if (!normalized) return total;
+          const [rowYearText, rowMonthText] = normalized.split('/');
+          const rowYear = Number(rowYearText);
+          const rowMonth = Number(rowMonthText);
+          const matches = scope === 'current'
+            ? rowYear === year && rowMonth === month
+            : scope === 'previous'
+              ? rowYear === (month === 1 ? year - 1 : year) && rowMonth === previousMonth
+              : rowYear === year && rowMonth <= month;
+          return matches ? total + (Number(row.valor) || 0) : total;
+        }, 0);
+      };
+      const rules = [
+        { label: 'Base EOP', realIndicator: 'HC', budgetIndicator: 'EOP' },
+        // Na base oficial, o realizado de Net Adds está em NETADDS_BASE e o orçamento em NETADDS.
+        { label: 'Net Adds', realIndicator: 'NETADDS_BASE', budgetIndicator: 'NETADDS' },
+        { label: 'Gross Adds', realIndicator: 'GROSS', budgetIndicator: 'GROSS' },
+        { label: 'Churn', realIndicator: 'CHURN', budgetIndicator: 'CHURN' },
+      ];
+      for (const rule of rules) {
+        physicalRows.push({
+          indicator: rule.label,
+          real: aggregatePhysical(rule.realIndicator, 'real', 'current'),
+          budget: aggregatePhysical(rule.budgetIndicator, 'budget', 'current'),
+          realPrevious: aggregatePhysical(rule.realIndicator, 'real', 'previous'),
+          budgetPrevious: aggregatePhysical(rule.budgetIndicator, 'budget', 'previous'),
+          realYtd: aggregatePhysical(rule.realIndicator, 'real', 'ytd'),
+          budgetYtd: aggregatePhysical(rule.budgetIndicator, 'budget', 'ytd'),
+        });
+      }
+    } else {
+      const physicalMap = new Map<string, PhysicalReportRow>();
+      for (const row of rawPhysical) {
+        const indicator = String(row.indicador || 'Indicador');
+        const current = physicalMap.get(indicator) || { indicator, real: 0, budget: 0 };
+        const kind = reportValueKind(row.tipo);
+        const normalized = normalizeReportPeriod(row.anomes);
+        if (normalized === period && kind === 'real') current.real += Number(row.valor) || 0;
+        if (normalized === period && kind === 'budget') current.budget += Number(row.valor) || 0;
+        physicalMap.set(indicator, current);
+      }
+      physicalRows.push(...Array.from(physicalMap.values()).filter((row) => Math.abs(row.real) >= 0.0001 || Math.abs(row.budget) >= 0.0001));
     }
-    const physicalRows = Array.from(physicalMap.values())
-      .filter((row) => Math.abs(row.real) >= 0.0001 || Math.abs(row.budget) >= 0.0001);
     const logoPath = path.resolve(process.cwd(), 'public', 'Logos', `${companyId}.png`);
     const document = await generateExecutiveWordReport({
       companyId, period, financialRows, physicalRows,

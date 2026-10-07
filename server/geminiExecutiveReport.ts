@@ -100,6 +100,11 @@ let cachedServiceAccount: Record<string, unknown> | null = null;
 function getServiceAccountCredentials(): Record<string, unknown> | null {
   if (cachedServiceAccount) return cachedServiceAccount;
   try {
+    const envJson = process.env.GCP_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    if (envJson) {
+      cachedServiceAccount = JSON.parse(envJson);
+      return cachedServiceAccount;
+    }
     const saPath = path.resolve(process.cwd(), 'server', 'service-account.json');
     if (fs.existsSync(saPath)) {
       cachedServiceAccount = JSON.parse(fs.readFileSync(saPath, 'utf-8'));
@@ -610,10 +615,10 @@ function buildDynamicNioNarrative(params: {
   physicalRows: PhysicalReportRow[];
   justifications: Record<string, unknown>;
 }): NioExecutiveNarrative {
-  if (params.period === '2026/8' || params.financialRows.length === 0) {
-    return DEFAULT_NIO_NARRATIVE;
-  }
-  const { monthLower, fullLabel } = parsePeriodInfo(params.period);
+  if (params.financialRows.length === 0) return DEFAULT_NIO_NARRATIVE;
+  const { month, monthName, monthLower, fullLabel } = parsePeriodInfo(params.period);
+  const previousMonthName = MONTHS_PT[month === 1 ? 12 : month - 1];
+  const normalize = (value: unknown) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
   const sum = (pred: (r: FinancialReportRow) => boolean) => {
     let mOrc = 0, mReal = 0, yOrc = 0, yReal = 0;
     for (const r of params.financialRows) {
@@ -627,8 +632,9 @@ function buildDynamicNioNarrative(params: {
     return { mOrc, mReal, mDelta: mReal - mOrc, yOrc, yReal, yDelta: yReal - yOrc };
   };
 
-  const rev = sum((r) => (r.level1 || '').toLowerCase().includes('revenue') || r.level3.toLowerCase().includes('receita'));
-  const opex = sum((r) => !(r.level1 || '').toLowerCase().includes('revenue') && !r.level3.toLowerCase().includes('receita'));
+  const byN1 = (expected: string) => (r: FinancialReportRow) => normalize(r.level3) === normalize(expected);
+  const rev = sum(byN1('Receita'));
+  const opex = sum((r) => !byN1('Receita')(r));
   const ebitda = {
     mOrc: rev.mOrc + opex.mOrc,
     mReal: rev.mReal + opex.mReal,
@@ -638,9 +644,65 @@ function buildDynamicNioNarrative(params: {
     yDelta: rev.yDelta + opex.yDelta,
   };
 
+  const category = (n1: string) => sum(byN1(n1));
+  const relRev = category('1.Custos Relacionados a Receita');
+  const serve = category('2.Custos de Servir');
+  const admin = category('3.Custos Administrativos');
+  const cac = category('4.Custo de Aquisição do Cliente');
+  const hr = category('6.Custos RH');
+  const justificationText = (row: FinancialReportRow, ytd = false) => {
+    const value = params.justifications[row.id] as { vsOrcadoImpacts?: Array<{ justification?: string }>; momImpacts?: Array<{ justification?: string }>; ytdImpacts?: Array<{ justification?: string }> } | undefined;
+    const impacts = ytd ? value?.ytdImpacts || [] : [...(value?.vsOrcadoImpacts || []), ...(value?.momImpacts || [])];
+    return impacts.map((impact) => cleanSingleJustificationText(impact.justification)).filter(Boolean).slice(0, 2).join(' ');
+  };
+  const bulletsForN1 = (n1: string, ytd: boolean): string[] => params.financialRows
+    .filter(byN1(n1))
+    .map((row) => ({ row, delta: ytd ? row.realYtd - row.budgetYtd : row.realCurrent - row.budgetCurrent }))
+    .filter((item) => Math.abs(item.delta) >= 10_000)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 4)
+    .map(({ row, delta }) => {
+      const comment = justificationText(row, ytd);
+      const prefix = `${row.level2 || row.classification}: ${fmtRDec(delta / 1_000_000)} vs orçado`;
+      return comment ? `${prefix}. ${comment}` : `${prefix}.`;
+    });
+  const physical = (name: string) => params.physicalRows.find((row) => normalize(row.indicator) === normalize(name));
+  const base = physical('Base EOP');
+  const net = physical('Net Adds');
+  const gross = physical('Gross Adds');
+  const churn = physical('Churn');
+  const churnPct = base?.real ? ((churn?.real || 0) / base.real) * 100 : 0;
+  const churnBudgetPct = base?.budget ? ((churn?.budget || 0) / base.budget) * 100 : 0;
+  const k = (value?: number) => `${((value || 0) / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
+  const topRows = [...params.financialRows]
+    .sort((a, b) => Math.abs((b.realCurrent - b.budgetCurrent)) - Math.abs((a.realCurrent - a.budgetCurrent)))
+    .slice(0, 6)
+    .map((row) => {
+      const delta = (row.realCurrent - row.budgetCurrent) / 1_000_000;
+      const comment = justificationText(row);
+      return `${row.level2 || row.classification}: ${fmtRDec(delta)} vs orçado${comment ? `. ${comment}` : '.'}`;
+    });
+  const blankRevenue = [`Receita líquida e ARPU permanecem sem abertura validada nesta versão; os campos numéricos foram mantidos em branco conforme orientação de FP&A.`];
   return {
-    ...DEFAULT_NIO_NARRATIVE,
     executiveSummary: `A NIO fechou ${monthLower} (${fullLabel}) com EBITDA de ${fmtRDec(ebitda.mReal)} (orçado ${fmtRDec(ebitda.mOrc)}, Δ ${fmtRDec(ebitda.mDelta)}). A Receita Líquida realizou ${fmtRDec(rev.mReal)} ante ${fmtRDec(rev.mOrc)} orçados (Δ ${fmtRDec(rev.mDelta)}) e os Custos e Despesas somaram ${fmtRDec(opex.mReal)} vs ${fmtRDec(opex.mOrc)} orçados (Δ ${fmtRDec(opex.mDelta)}). No acumulado (YTD), a Receita Líquida atingiu ${fmtRDec(rev.yReal)} (Δ ${fmtRDec(rev.yDelta)}) e o EBITDA acumula ${fmtRDec(ebitda.yReal)} contra ${fmtRDec(ebitda.yOrc)} orçados (Δ ${fmtRDec(ebitda.yDelta)}).`,
+    keyMessages: topRows,
+    monthReading: `Em ${monthName}, o EBITDA apresentou desvio de ${fmtRDec(ebitda.mDelta)} frente ao orçamento. As principais pontes foram Receita ${fmtRDec(rev.mDelta)}, custos relacionados à receita ${fmtRDec(relRev.mDelta)}, custo de servir ${fmtRDec(serve.mDelta)}, custos administrativos ${fmtRDec(admin.mDelta)}, CAC ${fmtRDec(cac.mDelta)} e custos com pessoal ${fmtRDec(hr.mDelta)}.`,
+    ytdReading: `No acumulado de janeiro a ${monthLower}, o EBITDA totalizou ${fmtRDec(ebitda.yReal)}, ante ${fmtRDec(ebitda.yOrc)} orçados, com desvio de ${fmtRDec(ebitda.yDelta)}. A leitura YTD considera exclusivamente os valores acumulados até a competência selecionada e as justificativas registradas para o período.`,
+    kpisAnalysis: {
+      baseAndNetAdds: `A Base EOP encerrou ${monthLower} em ${k(base?.real)}, ante ${k(base?.budget)} orçados. O Net Adds foi de ${k(net?.real)}, frente a ${k(net?.budget)} no orçamento. A comparação mensal correta é ${previousMonthName} versus ${monthName}.`,
+      grossAddsAndSales: `Os Gross Adds somaram ${k(gross?.real)} em ${monthLower}, comparados a ${k(gross?.budget)} no orçamento.`,
+      churn: `O churn mensal foi de ${churnPct.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% da Base EOP, ante ${churnBudgetPct.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% orçados.`,
+      organicVision: `A leitura operacional utiliza CP = ANCHOR e origem FTTH na base física oficial, respeitando a competência ${params.period}.`,
+    },
+    revenueAnalysis: { netRevenueBullets: blankRevenue, arpuBullets: blankRevenue },
+    costsAnalysis: {
+      relRevenueBullets: [...bulletsForN1('1.Custos Relacionados a Receita', false), ...bulletsForN1('1.Custos Relacionados a Receita', true).map((b) => `YTD: ${b}`)].slice(0, 6),
+      costToServeBullets: [...bulletsForN1('2.Custos de Servir', false), ...bulletsForN1('2.Custos de Servir', true).map((b) => `YTD: ${b}`)].slice(0, 6),
+      adminBullets: [...bulletsForN1('3.Custos Administrativos', false), ...bulletsForN1('3.Custos Administrativos', true).map((b) => `YTD: ${b}`)].slice(0, 6),
+      cacBullets: [...bulletsForN1('4.Custo de Aquisição do Cliente', false), ...bulletsForN1('4.Custo de Aquisição do Cliente', true).map((b) => `YTD: ${b}`)].slice(0, 6),
+      oneOffsBullets: [...bulletsForN1('6.Custos RH', false), ...bulletsForN1('6.Custos RH', true).map((b) => `YTD: ${b}`)].slice(0, 6),
+    },
+    cacUnitaryAnalysis: { unitaryIntro: '', channelReading: '', commissionsAndDeferral: '' },
   };
 }
 
@@ -680,6 +742,12 @@ DADOS REAIS DO BIGQUERY E JUSTIFICATIVAS DO GCP PARA A COMPETÊNCIA ${params.per
 - Síntese base calculada para ${params.period}: ${JSON.stringify(dynamicBase)}
 
 Gere uma resposta em JSON estritamente válido mantendo o mesmo nível de profundidade numérica, concisão executiva e estrutura de campos da síntese base, utilizando EXCLUSIVAMENTE os números reais da competência ${params.period}.
+Regras obrigatórias:
+1. A comparação mensal deve ser sempre entre o mês imediatamente anterior e a competência ${params.period}; não reutilize julho/agosto de modelos antigos.
+2. Use as justificativas do mês selecionado para a leitura mensal e os comentários YTD para o acumulado de janeiro até a competência.
+3. Organize custos pelos campos NIO_N1 e NIO_N2 informados. Não invente linhas, valores, causas ou indicadores.
+4. ARPU, Receita Líquida detalhada e CAC unitário devem permanecer sem explicações numéricas quando a síntese base os marcar como não validados.
+5. Não repita nenhum texto do modelo de agosto que não esteja sustentado pelos dados enviados.
 Responda EXCLUSIVAMENTE o objeto JSON.
 `;
 
@@ -689,9 +757,11 @@ Responda EXCLUSIVAMENTE o objeto JSON.
         ...dynamicBase,
         ...parsed,
         kpisAnalysis: { ...dynamicBase.kpisAnalysis, ...parsed.kpisAnalysis },
-        revenueAnalysis: { ...dynamicBase.revenueAnalysis, ...parsed.revenueAnalysis },
+        // Receita detalhada e ARPU ainda não possuem regra validada; não permitir que a IA complete lacunas.
+        revenueAnalysis: dynamicBase.revenueAnalysis,
         costsAnalysis: { ...dynamicBase.costsAnalysis, ...parsed.costsAnalysis },
-        cacUnitaryAnalysis: { ...dynamicBase.cacUnitaryAnalysis, ...parsed.cacUnitaryAnalysis },
+        // CAC unitário permanece deliberadamente em branco até a fonte oficial ser validada.
+        cacUnitaryAnalysis: dynamicBase.cacUnitaryAnalysis,
       };
     }
   } catch {

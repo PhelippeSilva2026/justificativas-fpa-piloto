@@ -218,12 +218,18 @@ export function buildNioDynamicPageData(params: {
     indicator: string;
     real: number;
     budget: number;
+    realPrevious?: number;
+    budgetPrevious?: number;
+    realYtd?: number;
+    budgetYtd?: number;
   }>;
 }): NioPageData {
-  const { period, financialRows = [] } = params;
-  if (period === '2026/8' || financialRows.length === 0) {
-    return NIO_AGO26_DATA;
-  }
+  const { financialRows = [], physicalRows = [] } = params;
+  if (financialRows.length === 0) return NIO_AGO26_DATA;
+
+  const norm = (value: unknown) => String(value || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .trim().toLowerCase();
 
   const sumBy = (pred: (r: (typeof financialRows)[number]) => boolean) => {
     let mR = 0, mO = 0, yR = 0, yO = 0;
@@ -238,14 +244,15 @@ export function buildNioDynamicPageData(params: {
     return { mR, mO, mD: mR - mO, yR, yO, yD: yR - yO };
   };
 
-  const rev = sumBy((r) => (r.level1 || '').toLowerCase().includes('revenue') || r.level3.toLowerCase().includes('receita'));
-  // Custos são negativos no banco; na tabela NIO aparecem com sinal invertido (positivo para despesa)
-  const relRevRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('relacionados') || (r.level2 || '').toLowerCase().includes('cogs'));
-  const serveRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('servir'));
-  const admRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('administrativo'));
-  const cacRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('aquisi') || (r.level2 || '').toLowerCase().includes('cac'));
-  const oneOffRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('one-off') || (r.level2 || '').toLowerCase().includes('one off'));
-  const hrRaw = sumBy((r) => (r.level2 || '').toLowerCase().includes('pessoal') || (r.level3 || '').toLowerCase().includes('pessoal'));
+  const byN1 = (expected: string) => (r: (typeof financialRows)[number]) => norm(r.level3) === norm(expected);
+  const rev = sumBy(byN1('Receita'));
+  // Custos são negativos no banco; na leitura executiva aparecem como despesa positiva.
+  const relRevRaw = sumBy(byN1('1.Custos Relacionados a Receita'));
+  const serveRaw = sumBy(byN1('2.Custos de Servir'));
+  const admRaw = sumBy(byN1('3.Custos Administrativos'));
+  const cacRaw = sumBy(byN1('4.Custo de Aquisição do Cliente'));
+  const hrRaw = sumBy(byN1('6.Custos RH'));
+  const oneOffRaw = { mR: 0, mO: 0, mD: 0, yR: 0, yO: 0, yD: 0 };
 
   const inv = (p: { mR: number; mO: number; yR: number; yO: number }) => ({
     mR: -p.mR,
@@ -297,17 +304,98 @@ export function buildNioDynamicPageData(params: {
     isSubtotal,
   });
 
+  const getPhysical = (name: string) => physicalRows.find((row) => norm(row.indicator) === norm(name));
+  const base = getPhysical('Base EOP');
+  const netAdds = getPhysical('Net Adds');
+  const gross = getPhysical('Gross Adds');
+  const churn = getPhysical('Churn');
+  const fmtThousands = (value?: number) => value === undefined ? '-' : (value / 1_000).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+  const fmtIntegerThousands = (value?: number) => value === undefined ? '-' : Math.round(value / 1_000).toLocaleString('pt-BR');
+  const fmtDeltaK = (real?: number, budget?: number) => real === undefined || budget === undefined ? '-' : `${real - budget >= 0 ? '+' : ''}${fmtThousands(real - budget)}`;
+  const churnRealPct = base?.real ? ((churn?.real || 0) / base.real) * 100 : 0;
+  const churnBudgetPct = base?.budget ? ((churn?.budget || 0) / base.budget) * 100 : 0;
+  const churnRealYtdPct = base?.realYtd ? ((churn?.realYtd || 0) / base.realYtd) * 100 : 0;
+  const churnBudgetYtdPct = base?.budgetYtd ? ((churn?.budgetYtd || 0) / base.budgetYtd) * 100 : 0;
+  const pct = (value: number) => `${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+
+  type CostRow = NioPageData['costs51'][number];
+  const groupedByN2 = (n1: string): CostRow[] => {
+    const grouped = new Map<string, { mR: number; mO: number; yR: number; yO: number }>();
+    for (const row of financialRows.filter(byN1(n1))) {
+      const label = String(row.level2 || 'Não classificado').trim();
+      const acc = grouped.get(label) || { mR: 0, mO: 0, yR: 0, yO: 0 };
+      acc.mR += -row.realCurrent / 1_000_000;
+      acc.mO += -row.budgetCurrent / 1_000_000;
+      acc.yR += -row.realYtd / 1_000_000;
+      acc.yO += -row.budgetYtd / 1_000_000;
+      grouped.set(label, acc);
+    }
+    const detail: CostRow[] = Array.from(grouped.entries())
+      .filter(([, v]) => Math.max(Math.abs(v.mR), Math.abs(v.mO), Math.abs(v.yR), Math.abs(v.yO)) >= 0.05)
+      .sort((a, b) => Math.abs(b[1].mR - b[1].mO) - Math.abs(a[1].mR - a[1].mO))
+      .map(([linha, v]) => ({
+        linha,
+        mesReal: fmtDec1(v.mR), mesOrc: fmtDec1(v.mO), mesDelta: fmtDec1(v.mR - v.mO),
+        ytdReal: fmtDec1(v.yR), ytdOrc: fmtDec1(v.yO), ytdDelta: fmtDec1(v.yR - v.yO),
+      }));
+    const total = groupedByN1Total(n1);
+    detail.push({
+      linha: 'Total', mesReal: fmtDec1(total.mR), mesOrc: fmtDec1(total.mO), mesDelta: fmtDec1(total.mD),
+      ytdReal: fmtDec1(total.yR), ytdOrc: fmtDec1(total.yO), ytdDelta: fmtDec1(total.yD), isTotal: true,
+    });
+    return detail;
+  };
+  const groupedByN1Total = (n1: string) => inv(sumBy(byN1(n1)));
+
+  const pickN2 = (label: string, aliases: string[] = [label]): NioPageData['costs55'][number] => {
+    const candidates = financialRows.filter((row) => aliases.some((alias) => norm(row.level2).includes(norm(alias))));
+    const raw = { mR: 0, mO: 0, yR: 0, yO: 0 };
+    for (const row of candidates) {
+      raw.mR += -row.realCurrent / 1_000_000; raw.mO += -row.budgetCurrent / 1_000_000;
+      raw.yR += -row.realYtd / 1_000_000; raw.yO += -row.budgetYtd / 1_000_000;
+    }
+    return { linha: label, mesReal: fmtDec1(raw.mR), mesOrc: fmtDec1(raw.mO), mesDelta: fmtDec1(raw.mR - raw.mO), ytdReal: fmtDec1(raw.yR), ytdOrc: fmtDec1(raw.yO), ytdDelta: fmtDec1(raw.yR - raw.yO) };
+  };
+
+  const costs55 = [
+    pickN2('Buffer Tahto'),
+    pickN2('Contrato desvantajoso (Tahto)', ['Contrato desvantajoso', 'Desvantajoso Tahto']),
+    pickN2('Benefício Alagoas', ['Benefício Alagoas', 'Alagoas Benefício']),
+    pickN2('Denúncia espontânea (ICMS)', ['Denúncia espontânea', 'Denuncia espontanea']),
+    pickN2('Oi Service TSA / ELEA', ['Oi Service TSA', 'ELEA']),
+    pickN2('Pessoal'),
+  ];
+  costs55[costs55.length - 1].linha = 'Custos com pessoal';
+  costs55[costs55.length - 1].isBold = true;
+
   return {
     ...NIO_AGO26_DATA,
     summaryKpis: [
-      ...NIO_AGO26_DATA.summaryKpis.slice(0, 5),
+      {
+        indicador: 'Base EOP (mil)', real: fmtIntegerThousands(base?.real), orcado: fmtIntegerThousands(base?.budget),
+        delta: fmtDeltaK(base?.real, base?.budget), referencia: base?.realPrevious === undefined ? '-' : `${fmtDeltaK(base.real, base.realPrevious)} vs mês anterior`,
+        isNegative: (base?.real || 0) < (base?.budget || 0),
+      },
+      {
+        indicador: 'Net Adds (mil)', real: fmtThousands(netAdds?.real), orcado: fmtThousands(netAdds?.budget),
+        delta: fmtDeltaK(netAdds?.real, netAdds?.budget), referencia: `YTD ${fmtThousands(netAdds?.realYtd)} vs ${fmtThousands(netAdds?.budgetYtd)}`,
+        isNegative: (netAdds?.real || 0) < (netAdds?.budget || 0),
+      },
+      {
+        indicador: 'Gross Adds (mil)', real: fmtThousands(gross?.real), orcado: fmtThousands(gross?.budget),
+        delta: fmtDeltaK(gross?.real, gross?.budget), referencia: `YTD ${fmtThousands(gross?.realYtd)} vs ${fmtThousands(gross?.budgetYtd)}`,
+        isNegative: (gross?.real || 0) < (gross?.budget || 0),
+      },
+      {
+        indicador: 'Churn (% a.m.)', real: pct(churnRealPct), orcado: pct(churnBudgetPct),
+        delta: `${(churnRealPct - churnBudgetPct).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}pp`,
+        referencia: `YTD ${pct(churnRealYtdPct)} vs ${pct(churnBudgetYtdPct)}`,
+        isNegative: churnRealPct > churnBudgetPct,
+      },
+      { indicador: 'ARPU (R$)', real: '-', orcado: '-', delta: '-', referencia: '-' },
       {
         indicador: 'Receita líquida',
-        real: fmtDec1(rev.mR, false),
-        orcado: fmtDec1(rev.mO, false),
-        delta: `${fmtDec1(rev.mD, false)}`,
-        referencia: `YTD ${fmtDec1(rev.yR, false)}`,
-        isNegative: rev.mD < 0,
+        real: '-', orcado: '-', delta: '-', referencia: '-',
       },
       {
         indicador: 'EBITDA',
@@ -340,5 +428,23 @@ export function buildNioDynamicPageData(params: {
         isBold: true,
       },
     ],
+    kpisTable: [
+      { kpi: 'Base EOP (mil)', realAgo: fmtIntegerThousands(base?.real), orcado: fmtIntegerThousands(base?.budget), deltaOrc: fmtDeltaK(base?.real, base?.budget), forecast: '-', deltaFcst: '-', ytdReal: '-', ytdOrc: '-' },
+      { kpi: 'Net Adds (mil)', realAgo: fmtThousands(netAdds?.real), orcado: fmtThousands(netAdds?.budget), deltaOrc: fmtDeltaK(netAdds?.real, netAdds?.budget), forecast: '-', deltaFcst: '-', ytdReal: fmtThousands(netAdds?.realYtd), ytdOrc: fmtThousands(netAdds?.budgetYtd) },
+      { kpi: 'Gross Adds (mil)', realAgo: fmtThousands(gross?.real), orcado: fmtThousands(gross?.budget), deltaOrc: fmtDeltaK(gross?.real, gross?.budget), forecast: '-', deltaFcst: '-', ytdReal: fmtThousands(gross?.realYtd), ytdOrc: fmtThousands(gross?.budgetYtd) },
+      { kpi: 'Churn (% a.m.)', realAgo: pct(churnRealPct), orcado: pct(churnBudgetPct), deltaOrc: `${(churnRealPct - churnBudgetPct).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}pp`, forecast: '-', deltaFcst: '-', ytdReal: pct(churnRealYtdPct), ytdOrc: pct(churnBudgetYtdPct) },
+    ],
+    revenueTable: [
+      { indicador: 'Net Revenue (R$ Mn)', jul: '-', ago: '-', orcado: '-', deltaOrc: '-', ago25: '-', ytd: '-', deltaYtd: '-' },
+      { indicador: 'Base EOP (mil)', jul: fmtIntegerThousands(base?.realPrevious), ago: fmtIntegerThousands(base?.real), orcado: fmtIntegerThousands(base?.budget), deltaOrc: base?.budget ? `${(((base.real || 0) / base.budget - 1) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : '-', ago25: '-', ytd: '-', deltaYtd: '-' },
+      { indicador: 'Base média (mil)', jul: '-', ago: '-', orcado: '-', deltaOrc: '-', ago25: '-', ytd: '-', deltaYtd: '-' },
+      { indicador: 'ARPU total (R$)', jul: '-', ago: '-', orcado: '-', deltaOrc: '-', ago25: '-', ytd: '-', deltaYtd: '-' },
+    ],
+    costs51: groupedByN2('1.Custos Relacionados a Receita'),
+    costs52: groupedByN2('2.Custos de Servir'),
+    costs53: groupedByN2('3.Custos Administrativos'),
+    costs54: groupedByN2('4.Custo de Aquisição do Cliente'),
+    channelCommissions: NIO_AGO26_DATA.channelCommissions.map((row) => ({ ...row, mix: '-', jul: '-', ago: '-', orc: '-', delta: '-' })),
+    costs55,
   };
 }
