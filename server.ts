@@ -1460,15 +1460,15 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
           ? "COALESCE(PONTO_FOCAL_FINANCEIRO_NIO, 'Não informado')"
           : "'Não informado'";
     const companyFilter = companyId === 'nio'
-      ? "AREA IS NOT NULL AND NIO_N3 IS NOT NULL AND TRIM(NIO_N3) NOT IN ('', '0', 'SEM_REGRA')"
+      ? "NIO_N3 IS NOT NULL AND TRIM(NIO_N3) NOT IN ('', '0', 'SEM_REGRA')"
       : companyId === 'tecto'
         ? "TRIM(NIVEL_2) = 'Tecto' AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL"
         : "TRIM(NIVEL_2) IN ('V.tal', 'V.tal (LTLA)', 'B2B', 'Mobile Solutions', 'UmTelecom') AND AREA IS NOT NULL AND CLASSIFICACAO_FPA IS NOT NULL";
     const dimensions = companyId === 'nio'
       ? `TRIM(COALESCE(NIVEL_0, 'BAU')) AS n0,
          TRIM(COALESCE(NIVEL_1, '-')) AS n1Type,
-         'Diretoria Geral' AS diretoria,
-         TRIM(COALESCE(AREA, 'Área Geral')) AS area,
+         TRIM(COALESCE(NULLIF(DIRETORIA_NIO, ''), '-')) AS diretoria,
+         TRIM(COALESCE(NULLIF(AREA_NIO, ''), '-')) AS area,
          TRIM(${nioResponsibleColumn}) AS responsavel,
          TRIM(COALESCE(NIO_N1, 'Custos & Despesas')) AS n1,
          TRIM(COALESCE(NIO_N2, 'Operacional')) AS n2,
@@ -1523,7 +1523,35 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
       n0: string; n1Type: string; diretoria: string; area: string; responsavel: string; n1: string; n2: string; n3: string;
     };
     const financialMap = new Map<string, Acc>();
+    const isMissingDimension = (value: unknown) => {
+      const normalized = String(value ?? '').trim().toLocaleLowerCase('pt-BR');
+      return !normalized || normalized === '-' || normalized === 'não informado' || normalized === 'nao informado';
+    };
+    const reportHierarchyKey = (row: Record<string, unknown>) =>
+      ['n1', 'n2', 'n3'].map((key) => String(row[key] ?? '').trim().toLocaleLowerCase('pt-BR')).join('|');
+    const reportActualDimensions = new Map<string, Pick<Acc, 'diretoria' | 'area' | 'responsavel'>>();
     for (const row of rawFinancial) {
+      if (reportValueKind(row.tipo) !== 'real') continue;
+      const candidate = {
+        diretoria: String(row.diretoria ?? '-'),
+        area: String(row.area ?? '-'),
+        responsavel: String(row.responsavel ?? '-'),
+      };
+      const key = reportHierarchyKey(row);
+      const current = reportActualDimensions.get(key);
+      const score = Object.values(candidate).filter((value) => !isMissingDimension(value)).length;
+      const currentScore = current ? Object.values(current).filter((value) => !isMissingDimension(value)).length : -1;
+      if (score > currentScore) reportActualDimensions.set(key, candidate);
+    }
+
+    for (const sourceRow of rawFinancial) {
+      const inherited = reportActualDimensions.get(reportHierarchyKey(sourceRow));
+      const row = inherited ? {
+        ...sourceRow,
+        diretoria: isMissingDimension(sourceRow.diretoria) ? inherited.diretoria : sourceRow.diretoria,
+        area: isMissingDimension(sourceRow.area) ? inherited.area : sourceRow.area,
+        responsavel: isMissingDimension(sourceRow.responsavel) ? inherited.responsavel : sourceRow.responsavel,
+      } : sourceRow;
       const dims = ['n0', 'n1Type', 'diretoria', 'area', 'responsavel', 'n1', 'n2', 'n3'].map((key) => String(row[key] ?? '-'));
       const key = dims.join('|');
       const acc = financialMap.get(key) || {

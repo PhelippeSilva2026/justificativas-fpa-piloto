@@ -55,6 +55,12 @@ export async function buildNioExecutiveDocx(params: {
   const month = Number(mStr) || 8;
   const monthName = MONTHS_PT[month] || 'Agosto';
   const shortYear = String(year).slice(-2);
+  const monthShort = monthName.slice(0, 3);
+  const previousMonth = month === 1 ? 12 : month - 1;
+  const previousYear = month === 1 ? year - 1 : year;
+  const previousMonthShort = (MONTHS_PT[previousMonth] || '').slice(0, 3);
+  const previousShortYear = String(previousYear).slice(-2);
+  const priorYearShort = String(year - 1).slice(-2);
   const d = buildNioDynamicPageData({ period, financialRows, physicalRows });
 
   // 1. Gerar os 8 gráficos oficiais em PNG de alta resolução
@@ -69,7 +75,7 @@ export async function buildNioExecutiveDocx(params: {
     chartUnitarioCac,
   ] = await Promise.all([
     renderWaterfallChart({
-      title: 'Agosto/26 (R$ Mn)',
+      title: `${monthName}/${shortYear} (R$ Mn)`,
       width: 500,
       height: 180,
       bars: [
@@ -107,7 +113,7 @@ export async function buildNioExecutiveDocx(params: {
       labels: ['A25', 'J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', "D'26"],
       bars: [-35, -20, -10, 5, 8, 12, 18, 20, 21, 25, 28, 32, 35],
       forecastLine: [-30, -18, -8, 8, 12, 16, 22, 24, 25, 28, 30, 34, 38],
-      highlightLast: { label: 'Ago: real 21k | orç. 46k' },
+      highlightLast: { label: `${monthShort}: real 21k | orç. 46k` },
     }),
     renderBarWithLineChart({
       title: 'Gross Adds (mil)',
@@ -116,7 +122,7 @@ export async function buildNioExecutiveDocx(params: {
       labels: ['A25', 'J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', "D'26"],
       bars: [85, 88, 92, 95, 102, 108, 114, 114, 114, 118, 120, 122, 125],
       forecastLine: [90, 92, 96, 100, 105, 110, 112, 110, 104, 112, 115, 118, 120],
-      highlightLast: { label: 'Ago: real 114k | orç. 124k' },
+      highlightLast: { label: `${monthShort}: real 114k | orç. 124k` },
     }),
     renderLineChart({
       title: 'Churn (% a.m.)',
@@ -166,14 +172,14 @@ export async function buildNioExecutiveDocx(params: {
       width: 480,
       height: 160,
       bars: [
-        { label: 'Jul/26', value: 599, isTotal: true },
+        { label: `${previousMonthShort}/${previousShortYear}`, value: 599, isTotal: true },
         { label: 'Camp PAP', value: 5 },
         { label: 'Prod EPS', value: 1 },
         { label: 'Camp Dealers', value: 2 },
         { label: 'Inbound TLV', value: 5 },
         { label: 'Camp assist.', value: 1 },
         { label: 'Não assist.', value: 13 },
-        { label: 'Ago/26', value: 631, isTotal: true },
+        { label: `${monthShort}/${shortYear}`, value: 631, isTotal: true },
       ],
     }),
   ]);
@@ -291,8 +297,8 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('Indicador', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 30 }),
-            formatCell('Real ago/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 16 }),
-            formatCell('Orçado ago/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 18 }),
+            formatCell(`Real ${monthShort.toLowerCase()}/${shortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 16 }),
+            formatCell(`Orçado ${monthShort.toLowerCase()}/${shortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 18 }),
             formatCell('Δ vs orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 18 }),
             formatCell('Referência', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 18 }),
           ],
@@ -334,7 +340,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('R$ Mn', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 34 }),
-            formatCell('Agosto/26 Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 11 }),
+            formatCell(`${monthName}/${shortYear} Real`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 11 }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 11 }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 11 }),
             formatCell('YTD Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true, widthPercent: 11 }),
@@ -400,7 +406,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('KPI', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 30 }),
-            formatCell('Real ago', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`Real ${monthShort.toLowerCase()}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Forecast', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -459,10 +465,10 @@ export async function buildNioExecutiveDocx(params: {
           children: [
             formatCell('Indicadores', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 28 }),
             formatCell('Jul/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
-            formatCell('Ago/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthShort}/${shortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
-            formatCell('Ago/25', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthShort}/${priorYearShort}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('YTD', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ% YTD orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
           ],
@@ -504,7 +510,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('R$ Mn', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 38 }),
-            formatCell('Agosto/26 Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthName}/${shortYear} Real`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('YTD Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -538,7 +544,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('R$ Mn', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 38 }),
-            formatCell('Agosto/26 Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthName}/${shortYear} Real`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('YTD Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -579,7 +585,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('R$ Mn', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 38 }),
-            formatCell('Agosto/26 Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthName}/${shortYear} Real`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('YTD Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -613,7 +619,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('R$ Mn', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 38 }),
-            formatCell('Agosto/26 Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthName}/${shortYear} Real`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('YTD Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -663,7 +669,7 @@ export async function buildNioExecutiveDocx(params: {
             formatCell('Comissão unitária por canal (R$)', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 35 }),
             formatCell('Mix real | orç.', { header: true, align: AlignmentType.CENTER, fill: NIO_GREEN, bold: true }),
             formatCell('Jul/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
-            formatCell('Ago/26', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthShort}/${shortYear}`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ vs orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
           ],
@@ -695,7 +701,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('R$ Mn', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 38 }),
-            formatCell('Agosto/26 Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthName}/${shortYear} Real`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('YTD Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -736,7 +742,7 @@ export async function buildNioExecutiveDocx(params: {
           tableHeader: true,
           children: [
             formatCell('R$ Mn', { header: true, fill: NIO_GREEN, bold: true, widthPercent: 38 }),
-            formatCell('Agosto/26 Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
+            formatCell(`${monthName}/${shortYear} Real`, { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Orçado', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('Δ Orç.', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
             formatCell('YTD Real', { header: true, align: AlignmentType.RIGHT, fill: NIO_GREEN, bold: true }),
@@ -766,7 +772,7 @@ export async function buildNioExecutiveDocx(params: {
 
   const document = new Document({
     creator: 'FP&A NIO Fibra',
-    title: 'NIO Fechamento Agosto/2026 · Documento de leitura',
+    title: `NIO Fechamento ${monthName}/${year} · Documento de leitura`,
     description: 'Documento executivo oficial de reunião de performance de resultados da NIO Fibra.',
     styles: {
       default: {

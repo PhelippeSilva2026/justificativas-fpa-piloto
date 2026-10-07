@@ -18,6 +18,7 @@ export interface WaterfallConfig {
   minVal: number;
   maxVal: number;
   brackets?: WaterfallDeltaBracket[];
+  connectorBreaks?: number[];
 }
 
 function formatDeltaBadgeText(val: number, pct: number): string {
@@ -28,7 +29,8 @@ function formatDeltaBadgeText(val: number, pct: number): string {
 }
 
 /**
- * Constrói a lista de barras para o Gráfico 01 (Mês: Real M-1 -> Real 2026 -> Orçado 2026)
+ * Constrói duas pontes independentes no mesmo gráfico:
+ * MoM: Real M-1 -> Real atual; Vs Orçado: Orçado -> Real atual.
  */
 export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifications): WaterfallConfig {
   const bars: WaterfallBarItem[] = [];
@@ -73,13 +75,25 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
     color: '#192B1C', // Verde quase preto NIO
   });
 
-  // 4. Barras intermediárias Vs Orçado (Real Corrente -> Orçado)
-  let orcadoBridgeAccum = row.realCurrent;
+  const firstRealCurrentIndex = bars.length - 1;
+
+  // 4. Segunda ponte independente: começa no Orçado e termina no Real.
+  // Assim, os impactos mantêm exatamente os sinais registrados pelo usuário.
+  let orcadoBridgeAccum = row.orcadoCurrent;
+  const orcadoCurrentIndex = bars.length;
+  bars.push({
+    label: 'Orçado 2026',
+    category: 'base',
+    startValue: 0,
+    endValue: row.orcadoCurrent,
+    changeValue: row.orcadoCurrent,
+    displayValue: row.orcadoCurrent,
+    color: '#14412A',
+  });
+
   const vsOrcadoImpacts = justifications?.vsOrcadoImpacts || [];
   vsOrcadoImpacts.forEach((imp) => {
-    // Os impactos são armazenados como Real - Orçado. Como o gráfico caminha
-    // do Real para o Orçado, o movimento visual precisa usar o sinal inverso.
-    const bridgeChange = -imp.value;
+    const bridgeChange = imp.value;
     const start = orcadoBridgeAccum;
     const end = orcadoBridgeAccum + bridgeChange;
     orcadoBridgeAccum = end;
@@ -89,20 +103,20 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
       startValue: start,
       endValue: end,
       changeValue: bridgeChange,
-      displayValue: imp.value,
+      displayValue: bridgeChange,
       color: bridgeChange < 0 ? '#8B0000' : '#22C55E',
     });
   });
 
-  // 5. Barra final: Orçado 2026
+  // 5. Fechamento da segunda ponte no Real atual.
   bars.push({
-    label: 'Orçado 2026',
+    label: 'Real 2026',
     category: 'total',
     startValue: 0,
-    endValue: row.orcadoCurrent,
-    changeValue: row.orcadoCurrent,
-    displayValue: row.orcadoCurrent,
-    color: '#14412A',
+    endValue: row.realCurrent,
+    changeValue: row.realCurrent,
+    displayValue: row.realCurrent,
+    color: '#192B1C',
   });
 
   // Cálculo de limites do eixo Y com folga superior generosa
@@ -124,8 +138,7 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
   }
 
   // Linhas superiores de variação (MoM: Real M-1 -> Real 2026 e Vs Orçado: Real 2026 -> Orçado 2026)
-  const realCurrentIndex = 1 + momImpacts.length;
-  const orcadoCurrentIndex = realCurrentIndex + 1 + vsOrcadoImpacts.length;
+  const finalRealCurrentIndex = orcadoCurrentIndex + 1 + vsOrcadoImpacts.length;
 
   const momDelta = row.diffMMinus1Abs !== undefined && row.diffMMinus1Abs !== 0
     ? row.diffMMinus1Abs
@@ -144,16 +157,16 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
   const brackets: WaterfallDeltaBracket[] = [
     {
       fromIndex: 0,
-      toIndex: realCurrentIndex,
-      label: formatDeltaBadgeText(momDelta, momPct),
+      toIndex: firstRealCurrentIndex,
+      label: `MoM · ${formatDeltaBadgeText(momDelta, momPct)}`,
       value: momDelta,
       percent: momPct,
       type: 'mom',
     },
     {
-      fromIndex: realCurrentIndex,
-      toIndex: orcadoCurrentIndex,
-      label: formatDeltaBadgeText(vsOrcDelta, vsOrcPct),
+      fromIndex: orcadoCurrentIndex,
+      toIndex: finalRealCurrentIndex,
+      label: `Vs Orçado · ${formatDeltaBadgeText(vsOrcDelta, vsOrcPct)}`,
       value: vsOrcDelta,
       percent: vsOrcPct,
       type: 'vsOrcado',
@@ -166,6 +179,7 @@ export function buildMonthWaterfallData(row: DRERow, justifications?: RowJustifi
     minVal: min,
     maxVal: max,
     brackets,
+    connectorBreaks: [firstRealCurrentIndex],
   };
 }
 
@@ -302,6 +316,8 @@ export function renderWaterfallToCanvas(
   const totalBars = bars.length;
   if (totalBars === 0 || chartW <= 0 || chartH <= 0) return;
 
+  const slotWidth = chartW / totalBars;
+
   // Fonte padrão de sistema para máxima nitidez
   const systemFont = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
@@ -312,31 +328,8 @@ export function renderWaterfallToCanvas(
   ctx.textBaseline = 'top';
   ctx.fillText(config.title, Math.round(8 * scale), Math.round(6 * scale));
 
-  // Eixo Y e Linhas de Grade discretas e nítidas
-  const gridSteps = 4;
-  ctx.strokeStyle = '#D8D4CE';
-  ctx.lineWidth = Math.max(1, Math.round(1 * scale));
-  ctx.setLineDash([Math.round(3 * scale), Math.round(3 * scale)]);
-
-  for (let i = 0; i <= gridSteps; i++) {
-    const val = minVal + (maxVal - minVal) * (i / gridSteps);
-    const y = Math.round(marginTop + chartH - (chartH * (val - minVal)) / (maxVal - minVal || 1)) + 0.5;
-    
-    ctx.beginPath();
-    ctx.moveTo(marginLeft, y);
-    ctx.lineTo(marginLeft + chartW, y);
-    ctx.stroke();
-
-    // Rótulo do grid à direita com alta legibilidade (10.5px nítido)
-    ctx.fillStyle = '#5A6454';
-    ctx.font = `600 ${Math.round(10.5 * scale)}px ${systemFont}`;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    ctx.setLineDash([]);
-    ctx.fillText(formatCurrencyShort(val, false), width - Math.round(6 * scale), y);
-    ctx.setLineDash([Math.round(3 * scale), Math.round(3 * scale)]);
-  }
-  ctx.setLineDash([]);
+  // Sem grade horizontal e sem rótulos do eixo Y: o foco fica nas barras
+  // e nos valores executivos exibidos diretamente sobre cada elemento.
 
   // Linha base Zero sólida e destacada
   const yZero = Math.round(marginTop + chartH - (chartH * (0 - minVal)) / (maxVal - minVal || 1)) + 0.5;
@@ -348,7 +341,6 @@ export function renderWaterfallToCanvas(
   ctx.stroke();
 
   // Cálculo das larguras das colunas e espaçamento
-  const slotWidth = chartW / totalBars;
   const barWidth = Math.max(Math.round(16 * scale), Math.min(Math.round(slotWidth * 0.62), Math.round(52 * scale)));
   const barPadding = Math.round((slotWidth - barWidth) / 2);
 
@@ -357,12 +349,29 @@ export function renderWaterfallToCanvas(
     return Math.round(marginTop + chartH - (chartH * (val - minVal)) / (maxVal - minVal || 1));
   };
 
+  // Interrompe discretamente o eixo zero entre pontes independentes
+  // (ex.: MoM | Vs Orçado), reforçando que os caminhos não são contínuos.
+  config.connectorBreaks?.forEach((breakAfterIndex) => {
+    if (breakAfterIndex < 0 || breakAfterIndex >= totalBars - 1) return;
+
+    const breakX = Math.round(marginLeft + (breakAfterIndex + 1) * slotWidth);
+    const breakWidth = Math.max(12, Math.round(18 * scale));
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(
+      Math.round(breakX - breakWidth / 2),
+      Math.round(yZero - 3 * scale),
+      breakWidth,
+      Math.max(4, Math.round(6 * scale)),
+    );
+  });
+
   // Renderizar linhas conectoras pontilhadas entre as barras
   ctx.strokeStyle = '#9AA190';
   ctx.lineWidth = Math.max(1, Math.round(1 * scale));
   ctx.setLineDash([Math.round(2 * scale), Math.round(2 * scale)]);
 
   for (let i = 0; i < totalBars - 1; i++) {
+    if (config.connectorBreaks?.includes(i)) continue;
     const currentBar = bars[i];
     const nextBar = bars[i + 1];
 

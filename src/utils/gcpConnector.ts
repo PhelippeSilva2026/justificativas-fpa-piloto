@@ -160,7 +160,51 @@ export function calculateDREFromRaw(records: GcpRawRecord[], selectedPeriod: str
 
   const groups = new Map<string, GroupAcc>();
 
-  for (const rec of records) {
+  // Budget costuma chegar com as dimensões organizacionais vazias/"-", enquanto
+  // o Real da mesma linha financeira traz Diretoria, Área, Responsável e BP.
+  // Herdamos essas dimensões pela hierarquia N1/N2/N3 antes de agregar, evitando
+  // separar Real e Budget em linhas distintas (vale para NIO, V.tal e Tecto).
+  const isPlaceholderDimension = (value?: string) => {
+    const normalized = String(value || '').trim().toLocaleLowerCase('pt-BR');
+    return !normalized || normalized === '-' || normalized === 'não informado' || normalized === 'nao informado';
+  };
+  const hierarchyKey = (record: GcpRawRecord) =>
+    [record.n1, record.n2, record.n3]
+      .map((value) => String(value || '').trim().toLocaleLowerCase('pt-BR'))
+      .join('|');
+  const actualDimensions = new Map<string, Pick<GcpRawRecord, 'diretoria' | 'area' | 'responsavel' | 'bpFinanceiro'>>();
+
+  for (const record of records) {
+    const cleanType = String(record.tipo || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const isActual = cleanType.includes('ACTUAL') || cleanType.includes('REAL');
+    if (!isActual) continue;
+    const key = hierarchyKey(record);
+    const current = actualDimensions.get(key);
+    const score = [record.diretoria, record.area, record.responsavel, record.bpFinanceiro]
+      .filter((value) => !isPlaceholderDimension(value)).length;
+    const currentScore = current
+      ? [current.diretoria, current.area, current.responsavel, current.bpFinanceiro]
+          .filter((value) => !isPlaceholderDimension(value)).length
+      : -1;
+    if (score > currentScore) {
+      actualDimensions.set(key, {
+        diretoria: record.diretoria,
+        area: record.area,
+        responsavel: record.responsavel,
+        bpFinanceiro: record.bpFinanceiro,
+      });
+    }
+  }
+
+  for (const originalRecord of records) {
+    const inherited = actualDimensions.get(hierarchyKey(originalRecord));
+    const rec: GcpRawRecord = inherited ? {
+      ...originalRecord,
+      diretoria: isPlaceholderDimension(originalRecord.diretoria) ? inherited.diretoria : originalRecord.diretoria,
+      area: isPlaceholderDimension(originalRecord.area) ? inherited.area : originalRecord.area,
+      responsavel: isPlaceholderDimension(originalRecord.responsavel) ? inherited.responsavel : originalRecord.responsavel,
+      bpFinanceiro: isPlaceholderDimension(originalRecord.bpFinanceiro) ? inherited.bpFinanceiro : originalRecord.bpFinanceiro,
+    } : originalRecord;
     const recPeriod = normalizePeriod(rec.anomes);
     const key = `${rec.diretoria}|${rec.area}|${rec.responsavel}|${rec.bpFinanceiro || ''}|${rec.n1}|${rec.n2}|${rec.n3}`;
 
