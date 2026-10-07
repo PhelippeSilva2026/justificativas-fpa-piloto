@@ -347,7 +347,7 @@ app.get('/api/gcp/default-config', (req: Request, res: Response) => {
     hasDefaultCredentials: !!defaultCredentials,
     serviceAccountEmail: (defaultCredentials as { client_email?: string })?.client_email || null,
     projectId: 'vtal-fpea-prd',
-    datasetId: 'agente_fpa',
+    datasetId: '419556',
     tableId: 'DRE_FINAL_EXECUTIVA',
   });
 });
@@ -365,9 +365,9 @@ async function fetchBigQueryAutoLoadData(): Promise<Record<string, unknown>> {
   autoLoadInFlight = (async () => {
     try {
       const projectId = 'vtal-fpea-prd';
-      const datasetId = 'agente_fpa';
+      const datasetId = '419556';
       const tableId = 'DRE_FINAL_EXECUTIVA';
-      const fullTable = '`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA`';
+      const fullTable = '`vtal-fpea-prd.419556.DRE_FINAL_EXECUTIVA`';
 
       const bigquery = getBigQueryClient({
         projectId,
@@ -1446,7 +1446,7 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
     let financialColumns = new Set<string>();
     if (companyId === 'nio') {
       try {
-        const [metadata] = await bigquery.dataset('agente_fpa').table('DRE_FINAL_EXECUTIVA').getMetadata();
+        const [metadata] = await bigquery.dataset('419556').table('DRE_FINAL_EXECUTIVA').getMetadata();
         financialColumns = new Set((metadata.schema?.fields || []).map((field: { name: string }) => field.name.toLowerCase()));
       } catch (error) {
         console.warn('[Word] Não foi possível inspecionar o schema financeiro:', error);
@@ -1484,7 +1484,7 @@ app.post('/api/reports/executive-word', async (req: Request, res: Response) => {
     const financialQuery = `
       SELECT ${dimensions}, TRIM(CAST(anomes AS STRING)) AS anomes,
         TRIM(CAST(TIPO AS STRING)) AS tipo, SUM(SAFE_CAST(valor AS FLOAT64)) AS valor
-      FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA\`
+      FROM \`vtal-fpea-prd.419556.DRE_FINAL_EXECUTIVA\`
       WHERE ${companyFilter}
         AND TRIM(UPPER(NIVEL_0)) IN ('BAU', 'NEW BUSINESS', 'SPECIAL PROJECTS')
         AND SAFE_CAST(REGEXP_EXTRACT(CAST(anomes AS STRING), r'^(\\d{4})') AS INT64) = @year
@@ -1698,7 +1698,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
         // Todas as diretorias -> Resumo Executivo da Nio (DRE_FINAL_EXECUTIVA onde NIVEL_2 = 'Nio')
         query = `
           SELECT *
-          FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA\`
+          FROM \`vtal-fpea-prd.419556.DRE_FINAL_EXECUTIVA\`
           WHERE TRIM(NIVEL_2) = 'Nio'
             AND ${baseScopeFilter}
             AND ${periodFilter}
@@ -1732,7 +1732,7 @@ app.post('/api/reports/export-razao-excel', async (req: Request, res: Response) 
         // Todas as Áreas -> Resumo Executivo da Vtal (DRE_FINAL_EXECUTIVA onde NIVEL_2 != 'Nio' e 'Tecto')
         query = `
           SELECT *
-          FROM \`vtal-fpea-prd.agente_fpa.DRE_FINAL_EXECUTIVA\`
+          FROM \`vtal-fpea-prd.419556.DRE_FINAL_EXECUTIVA\`
           WHERE NIVEL_2 IS NOT NULL
             AND TRIM(NIVEL_2) NOT IN ('Nio', 'Tecto')
             AND ${baseScopeFilter}
