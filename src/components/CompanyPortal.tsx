@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { REPORT_MONTH } from '../utils/reportingPeriod';
 import { Download, FileText, Loader2, X } from 'lucide-react';
 import { CompanyId } from '../types';
 import { COMPANIES } from '../utils/companyConfigs';
@@ -15,7 +16,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
   savedCounts
 }) => {
   const [reportCompany, setReportCompany] = useState<CompanyId | null>(null);
-  const [reportMonth, setReportMonth] = useState('2026-09');
+  const [reportMonth, setReportMonth] = useState(REPORT_MONTH);
   const [isGenerating, setIsGenerating] = useState(false);
   const [reportError, setReportError] = useState('');
 

@@ -1,4 +1,5 @@
 import pptxgen from 'pptxgenjs';
+import { EDITABLE_JUSTIFICATION_PERIOD, previousReportPeriod } from './reportingPeriod';
 import { DRERow, RowJustifications, CompanyId } from '../types';
 import { formatCurrencyShort } from './formatters';
 import { getCompanyLogoPngDataUrl, COMPANIES } from './companyConfigs';
@@ -16,9 +17,13 @@ export async function addSlideForDRERow(
   row: DRERow,
   justifications?: RowJustifications,
   logoDataUrl?: string,
-  companyId: CompanyId = 'nio'
+  companyId: CompanyId = 'nio',
+  period: string = EDITABLE_JUSTIFICATION_PERIOD
 ): Promise<void> {
   const slide = pptx.addSlide();
+  slide.addText(`Competência ${period} | MoM ${previousReportPeriod(period)} → ${period} | YTD jan–${period}`, {
+    x: 0.8, y: 7.15, w: 11.7, h: 0.18, fontFace: 'Arial', fontSize: 7, color: '666666',
+  });
 
   // Fundo Branco (#FFFFFF) conforme solicitado pelo usuário
   slide.background = { color: 'FFFFFF' };
@@ -188,7 +193,7 @@ export async function addSlideForDRERow(
 
   if (momList.length === 0) {
     monthBoxTextRuns.push({
-      text: '• Sem desvios adicionais informados para o período MoM.',
+      text: '• Justificativas MoM ainda não preenchidas nesta competência.',
       options: { fontFace: 'Arial', fontSize: mBodySize, italic: true, color: '666666', breakLine: true },
     });
   } else {
@@ -219,7 +224,7 @@ export async function addSlideForDRERow(
 
   if (vsOrcadoList.length === 0) {
     monthBoxTextRuns.push({
-      text: '• Aderência integral ao orçamento previsto no mês.',
+      text: '• Justificativas do mês versus orçado ainda não preenchidas nesta competência.',
       options: { fontFace: 'Arial', fontSize: mBodySize, italic: true, color: '666666', breakLine: true },
     });
   } else {
@@ -323,7 +328,7 @@ export async function addSlideForDRERow(
 
   if (ytdList.length === 0) {
     ytdBoxTextRuns.push({
-      text: '• Execução acumulada YTD em conformidade com as diretrizes da companhia.',
+      text: '• Justificativas YTD ainda não preenchidas nesta competência.',
       options: { fontFace: 'Arial', fontSize: yBodySize, italic: true, color: '666666', breakLine: true },
     });
   } else {
@@ -366,7 +371,8 @@ export async function exportToPowerPoint(
   rowsToExport: DRERow[],
   allJustifications: Record<string, RowJustifications>,
   fileNamePrefix: string = 'Apresentacao_DRE_Executiva',
-  companyId: CompanyId = 'nio'
+  companyId: CompanyId = 'nio',
+  period: string = EDITABLE_JUSTIFICATION_PERIOD
 ): Promise<void> {
   const pptx = new pptxgen();
   const company = COMPANIES[companyId] || COMPANIES.nio;
@@ -418,9 +424,9 @@ export async function exportToPowerPoint(
   });
 
   for (const row of sortedRows) {
-    await addSlideForDRERow(pptx, row, allJustifications[row.id], logoDataUrl, companyId);
+    await addSlideForDRERow(pptx, row, allJustifications[row.id], logoDataUrl, companyId, period);
   }
 
-  const cleanName = `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}.pptx`;
+  const cleanName = `${fileNamePrefix}_${period.replace('/', '_')}_${new Date().toISOString().slice(0, 10)}.pptx`;
   await pptx.writeFile({ fileName: cleanName });
 }

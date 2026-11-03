@@ -615,7 +615,7 @@ function buildDynamicNioNarrative(params: {
   physicalRows: PhysicalReportRow[];
   justifications: Record<string, unknown>;
 }): NioExecutiveNarrative {
-  if (params.financialRows.length === 0) return DEFAULT_NIO_NARRATIVE;
+  // Não substituir uma competência sem dados pelo fechamento histórico de agosto.
   const { month, monthName, monthLower, fullLabel } = parsePeriodInfo(params.period);
   const previousMonthName = MONTHS_PT[month === 1 ? 12 : month - 1];
   const normalize = (value: unknown) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();

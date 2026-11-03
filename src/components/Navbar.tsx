@@ -1,4 +1,5 @@
 import React from 'react';
+import { EDITABLE_JUSTIFICATION_PERIOD, AVAILABLE_REPORT_PERIODS } from '../utils/reportingPeriod';
 import { CompanyLogo } from './CompanyLogo';
 import { FileSpreadsheet, Presentation, Layers, ArrowLeft, Loader2, Eye, Pencil, ChevronDown } from 'lucide-react';
 import { DREWorkbook, CompanyId } from '../types';
@@ -78,11 +79,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   isExportingExcel,
 }) => {
   const [periodMenuOpen, setPeriodMenuOpen] = React.useState(false);
-  const availablePeriods = [
-    '2026/1', '2026/2', '2026/3', '2026/4',
-    '2026/5', '2026/6', '2026/7', '2026/8',
-    '2026/9'
-  ];
+  const availablePeriods = AVAILABLE_REPORT_PERIODS;
 
   const company = COMPANIES[currentCompany] || COMPANIES.nio;
   const excelLabel = getExcelButtonLabel(currentCompany, selectedDiretoria, selectedArea);
@@ -170,16 +167,16 @@ export const Navbar: React.FC<NavbarProps> = ({
               type="button"
               onClick={() => setPeriodMenuOpen((open) => !open)}
               className={`min-w-[92px] bg-black/40 font-bold text-xs px-2.5 py-1 rounded-lg border border-white/30 cursor-pointer inline-flex items-center justify-between gap-2 ${accentColorText}`}
-              title={selectedPeriod === '2026/9' ? 'Período liberado para edição' : 'Período disponível somente para consulta'}
+              title={selectedPeriod === EDITABLE_JUSTIFICATION_PERIOD ? 'Período liberado para edição' : 'Período disponível somente para consulta'}
             >
               <span>{selectedPeriod}</span>
-              {selectedPeriod === '2026/9' ? <Pencil className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              {selectedPeriod === EDITABLE_JUSTIFICATION_PERIOD ? <Pencil className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
               <ChevronDown className="w-3 h-3 text-white/60" />
             </button>
             {periodMenuOpen && (
               <div className="absolute top-full left-0 mt-1 z-50 min-w-[112px] rounded-xl border border-white/20 bg-[#173F2B] p-1 shadow-xl">
                 {availablePeriods.map((p) => {
-                  const editable = p === '2026/9';
+                  const editable = p === EDITABLE_JUSTIFICATION_PERIOD;
                   return (
                     <button
                       key={p}

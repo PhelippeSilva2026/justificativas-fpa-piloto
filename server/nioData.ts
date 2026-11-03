@@ -225,7 +225,7 @@ export function buildNioDynamicPageData(params: {
   }>;
 }): NioPageData {
   const { financialRows = [], physicalRows = [] } = params;
-  if (financialRows.length === 0) return NIO_AGO26_DATA;
+  // Ausência de dados não autoriza reutilizar o fechamento estático de agosto.
 
   const norm = (value: unknown) => String(value || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')

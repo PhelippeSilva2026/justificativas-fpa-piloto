@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { EDITABLE_JUSTIFICATION_PERIOD, AVAILABLE_REPORT_PERIODS, JUSTIFICATIONS_CACHE_VERSION, previousReportPeriod } from './utils/reportingPeriod';
 import { DRERow, DREWorkbook, RowJustifications, CompanyId } from './types';
 import { exportToPowerPoint } from './utils/pptxExport';
 import { calculateDREFromRaw, convertGcpRowsToWorkbook } from './utils/gcpConnector';
@@ -25,11 +26,7 @@ const FAKE_LEGACY_IDS = new Set([
   'TECTO_ENERGIA_MERCADO_LIVRE', 'TECTO_CHILLERS_CLIMATIZACAO', 'TECTO_CROSS_CONNECTS', 'TECTO_MANUTENCAO_UPS_GERADORES',
 ]);
 
-const EDITABLE_JUSTIFICATION_PERIOD = '2026/9';
-const AVAILABLE_PERIODS = new Set([
-  '2026/1', '2026/2', '2026/3', '2026/4', '2026/5',
-  '2026/6', '2026/7', '2026/8', EDITABLE_JUSTIFICATION_PERIOD,
-]);
+const AVAILABLE_PERIODS = new Set(AVAILABLE_REPORT_PERIODS);
 
 function uniqueSortedValues(
   rows: DRERow[],
@@ -114,7 +111,7 @@ export default function App() {
   }, []);
 
   const getPeriodStorageKey = (cid: CompanyId, period: string) =>
-    `${COMPANIES[cid]?.storageKey || 'nio_justifications'}_v3_${period.replace('/', '_')}`;
+    `${COMPANIES[cid]?.storageKey || 'nio_justifications'}_${JUSTIFICATIONS_CACHE_VERSION}_${period.replace('/', '_')}`;
 
   const saveLocalJustifications = (
     cid: CompanyId,
@@ -169,6 +166,7 @@ export default function App() {
     period: string,
     options?: { forceRefresh?: boolean; signal?: AbortSignal }
   ) => {
+    setJustificationsLookupMap({});
     const localData = readLocalJustifications(cid, period);
     const cachedPeriodData = companyPeriodsCacheRef.current[cid]?.[period];
 
@@ -190,6 +188,7 @@ export default function App() {
       const resp = await fetch(url, { signal: options?.signal });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
+      if (options?.signal?.aborted) return;
 
       if (data.success) {
         if (data.allPeriods && typeof data.allPeriods === 'object') {
@@ -299,7 +298,10 @@ export default function App() {
         (['nio', 'vtal', 'tecto'] as CompanyId[]).forEach((cid) => {
           const rows = data.companyRows[cid];
           if (Array.isArray(rows) && rows.length > 0) {
-            loaded[cid] = convertGcpRowsToWorkbook(rows, EDITABLE_JUSTIFICATION_PERIOD);
+            const converted = convertGcpRowsToWorkbook(rows, 'DRE_FINAL_EXECUTIVA (GCP)', previousReportPeriod(EDITABLE_JUSTIFICATION_PERIOD), EDITABLE_JUSTIFICATION_PERIOD);
+            loaded[cid] = converted.rawRecords?.length
+              ? calculateDREFromRaw(converted.rawRecords, EDITABLE_JUSTIFICATION_PERIOD)
+              : converted;
           }
         });
         setGcpWorkbooks(loaded);
@@ -338,7 +340,7 @@ export default function App() {
     if (!activeCompany) return;
     const liveWorkbook = gcpWorkbooks[activeCompany];
     if (liveWorkbook) {
-      const targetPeriod = selectedPeriod || liveWorkbook.monthCurrent || '2026/8';
+      const targetPeriod = selectedPeriod || EDITABLE_JUSTIFICATION_PERIOD;
       const syncedWb =
         liveWorkbook.rawRecords && liveWorkbook.rawRecords.length > 0 && liveWorkbook.monthCurrent !== targetPeriod
           ? calculateDREFromRaw(liveWorkbook.rawRecords, targetPeriod)
@@ -353,8 +355,8 @@ export default function App() {
     } else {
       // Sem dados fake: mantém vazio até o banco carregar
       setWorkbook({
-        monthPrevious: '2026/7',
-        monthCurrent: selectedPeriod || '2026/8',
+        monthPrevious: previousReportPeriod(selectedPeriod || EDITABLE_JUSTIFICATION_PERIOD),
+        monthCurrent: selectedPeriod || EDITABLE_JUSTIFICATION_PERIOD,
         rows: [],
       });
       setSelectedRowId('');
@@ -369,7 +371,7 @@ export default function App() {
 
     const liveWb = gcpWorkbooks[cid];
     if (liveWb) {
-      const targetPeriod = selectedPeriod || liveWb.monthCurrent || '2026/8';
+      const targetPeriod = selectedPeriod || EDITABLE_JUSTIFICATION_PERIOD;
       const syncedWb =
         liveWb.rawRecords && liveWb.rawRecords.length > 0 && liveWb.monthCurrent !== targetPeriod
           ? calculateDREFromRaw(liveWb.rawRecords, targetPeriod)
@@ -383,8 +385,8 @@ export default function App() {
       }
     } else {
       setWorkbook({
-        monthPrevious: '2026/7',
-        monthCurrent: selectedPeriod || '2026/8',
+        monthPrevious: previousReportPeriod(selectedPeriod || EDITABLE_JUSTIFICATION_PERIOD),
+        monthCurrent: selectedPeriod || EDITABLE_JUSTIFICATION_PERIOD,
         rows: [],
       });
       setCurrentFileName(COMPANIES[cid].excelFileName);
@@ -471,9 +473,9 @@ export default function App() {
       vsOrcadoImpacts: [],
       ytdImpacts: [],
     };
-    // Na NIO, o histórico anterior a setembro permanece preservado no armazenamento,
-    // mas não é exibido nas páginas de consulta.
-    if (activeCompany === 'nio' && selectedPeriod !== EDITABLE_JUSTIFICATION_PERIOD) return empty;
+    // Mantém a política antiga da NIO, sem esconder setembro após a virada.
+    const [selectedYear, selectedMonth] = selectedPeriod.split('/').map(Number);
+    if (activeCompany === 'nio' && selectedYear * 12 + selectedMonth < 2026 * 12 + 9) return empty;
     if (!row) return empty;
     if (justificationsMap[row.id]) return justificationsMap[row.id];
 
@@ -886,7 +888,7 @@ export default function App() {
       setIsExporting(true);
       showToast(`Renderizando gráficos em alta resolução e gerando PowerPoint (${cInfo.shortName})...`, 'success');
       const cleanSubcat = selectedRow.n3.replace(/[^a-zA-Z0-9]/g, '_');
-      await exportToPowerPoint([selectedRow], justificationsMap, `${cInfo.shortName}_Slide_${cleanSubcat}`, cid);
+      await exportToPowerPoint([selectedRow], { [selectedRow.id]: resolveRowJustifications(selectedRow) }, `${cInfo.shortName}_Slide_${cleanSubcat}`, cid, selectedPeriod);
       showToast(`Apresentação PowerPoint (${cInfo.name}) exportada com sucesso!`, 'success');
     } catch (err: unknown) {
       showToast(
@@ -907,7 +909,8 @@ export default function App() {
     try {
       setIsExporting(true);
       showToast(`Exportando deck executivo da ${cInfo.name} com ${rowsToExport.length} slides...`, 'success');
-      await exportToPowerPoint(rowsToExport, justificationsMap, `${cInfo.shortName}_Deck_Completo_DRE_Executivo`, cid);
+      const exportJustifications = Object.fromEntries(rowsToExport.map((row) => [row.id, resolveRowJustifications(row)]));
+      await exportToPowerPoint(rowsToExport, exportJustifications, `${cInfo.shortName}_Deck_Completo_DRE_Executivo`, cid, selectedPeriod);
       showToast(`Deck completo (${rowsToExport.length} slides) exportado com sucesso!`, 'success');
     } catch (err: unknown) {
       showToast(
@@ -1241,6 +1244,7 @@ export default function App() {
                 row={selectedRow}
                 justifications={currentJustifications}
                 onExportCurrent={handleExportCurrentSlide}
+                period={selectedPeriod}
                 isExporting={isExporting}
                 companyId={activeCompany}
               />

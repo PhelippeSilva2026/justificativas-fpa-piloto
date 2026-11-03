@@ -1,4 +1,5 @@
 import React from 'react';
+import { EDITABLE_JUSTIFICATION_PERIOD, previousReportPeriod } from '../utils/reportingPeriod';
 import { DRERow, RowJustifications, CompanyId } from '../types';
 import { CompanyLogo } from './CompanyLogo';
 import { WaterfallCanvas } from './WaterfallCanvas';
@@ -12,6 +13,7 @@ interface SlidePreviewProps {
   onExportCurrent: () => void;
   isExporting?: boolean;
   companyId?: CompanyId;
+  period?: string;
 }
 
 export const SlidePreview: React.FC<SlidePreviewProps> = ({
@@ -20,6 +22,7 @@ export const SlidePreview: React.FC<SlidePreviewProps> = ({
   onExportCurrent,
   isExporting = false,
   companyId = 'nio',
+  period = EDITABLE_JUSTIFICATION_PERIOD,
 }) => {
   const monthConfig = buildMonthWaterfallData(row, justifications);
   const ytdConfig = buildYTDWaterfallData(row, justifications);
@@ -78,6 +81,9 @@ export const SlidePreview: React.FC<SlidePreviewProps> = ({
               <strong className="font-bold">Responsável: </strong>
               <span className="text-[#334155]">{respText}</span>
             </div>
+            <div className="text-[10px] text-[#666666]">
+              Competência {period} · MoM {previousReportPeriod(period)} → {period} · YTD jan–{period}
+            </div>
           </div>
 
           {/* Logomarca da Empresa no canto superior direito */}
@@ -106,7 +112,7 @@ export const SlidePreview: React.FC<SlidePreviewProps> = ({
               <div className="text-[10px] font-bold text-[#192B1C]">MoM</div>
               {justifications.momImpacts.length === 0 ? (
                 <div className="text-[9px] text-[#6E7769] italic pl-1.5">
-                  • Sem desvios adicionais informados para o período MoM.
+                  • Justificativas MoM ainda não preenchidas nesta competência.
                 </div>
               ) : (
                 <ul className="space-y-0.5 pl-1.5">
@@ -129,7 +135,7 @@ export const SlidePreview: React.FC<SlidePreviewProps> = ({
               <div className="text-[10px] font-bold text-[#192B1C]">Vs Orçado</div>
               {justifications.vsOrcadoImpacts.length === 0 ? (
                 <div className="text-[9px] text-[#6E7769] italic pl-1.5">
-                  • Aderência integral ao orçamento previsto no mês.
+                  • Justificativas do mês versus orçado ainda não preenchidas nesta competência.
                 </div>
               ) : (
                 <ul className="space-y-0.5 pl-1.5">
@@ -165,7 +171,7 @@ export const SlidePreview: React.FC<SlidePreviewProps> = ({
               <div className="text-[10px] font-bold text-[#192B1C]">Vs Orçado</div>
               {justifications.ytdImpacts.length === 0 ? (
                 <div className="text-[9px] text-[#6E7769] italic pl-1.5">
-                  • Execução acumulada YTD em conformidade com as diretrizes da companhia.
+                  • Justificativas YTD ainda não preenchidas nesta competência.
                 </div>
               ) : (
                 <ul className="space-y-0.5 pl-1.5">

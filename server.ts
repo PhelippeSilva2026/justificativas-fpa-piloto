@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { EDITABLE_JUSTIFICATION_PERIOD, requiresExactJustifications, exactPeriodJustifications } from './src/utils/reportingPeriod';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1009,10 +1010,10 @@ app.post('/api/gcp/justifications/save-row', async (req: Request, res: Response)
     if (!row || !row.id || !justifications || !period) {
       return res.status(400).json({ success: false, message: 'Linha, mês e justificativas são obrigatórios.' });
     }
-    if (String(period).trim() !== '2026/9') {
+    if (String(period).trim() !== EDITABLE_JUSTIFICATION_PERIOD) {
       return res.status(403).json({
         success: false,
-        message: `O período ${String(period).trim()} está bloqueado para edição. Apenas 2026/9 está liberado.`,
+        message: `O período ${String(period).trim()} está bloqueado para edição. Apenas ${EDITABLE_JUSTIFICATION_PERIOD} está liberado.`,
       });
     }
 
@@ -1199,6 +1200,9 @@ function resolveEntryForPeriod(
   }
 
   const allPeriodKeys = Object.keys(normalizedPeriods);
+  if (requiresExactJustifications(targetNorm)) {
+    return exactPeriodJustifications(normalizedPeriods[targetNorm]) as StoredPeriodJustifications;
+  }
   if (allPeriodKeys.length === 0) return null;
 
   // Ordena todos os períodos <= targetNorm do mais recente para o mais antigo (ex: 2026/9, 2026/8, 2026/7, 2026/6, 2026/5)
@@ -1310,7 +1314,7 @@ function resolveEntryForPeriod(
 app.get('/api/gcp/justifications/load-company', async (req: Request, res: Response) => {
   try {
     const companyId = safeObjectSegment(req.query.companyId || 'nio', 'nio');
-    const period = normalizeReportPeriod(req.query.period) || String(req.query.period || '2026/8');
+    const period = normalizeReportPeriod(req.query.period) || EDITABLE_JUSTIFICATION_PERIOD;
     const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
     const bucketName = sharedJustificationsBucket();
 

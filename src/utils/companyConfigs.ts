@@ -1,4 +1,5 @@
 import { CompanyId, CompanyInfo, DRERow, DREWorkbook, RowJustifications } from '../types';
+import { EDITABLE_JUSTIFICATION_PERIOD, previousReportPeriod } from './reportingPeriod';
 import { getSampleWorkbook, getSampleJustifications } from './excelParser';
 
 export const COMPANIES: Record<CompanyId, CompanyInfo> = {
@@ -131,8 +132,8 @@ export async function getCompanyLogoPngDataUrl(companyId: CompanyId): Promise<st
 // Workbooks iniciais vazios (nunca exibe dados fake caso o banco não carregue)
 export function getCompanyWorkbook(_companyId: CompanyId): DREWorkbook {
   return {
-    monthPrevious: '2026/7',
-    monthCurrent: '2026/8',
+    monthPrevious: previousReportPeriod(EDITABLE_JUSTIFICATION_PERIOD),
+    monthCurrent: EDITABLE_JUSTIFICATION_PERIOD,
     rows: [],
   };
 }
