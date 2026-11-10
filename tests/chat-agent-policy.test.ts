@@ -38,6 +38,16 @@ test('normaliza códigos e quantidades em tabelas sem alterar textos', () => {
   assert.match(normalized, /AJUSTE CAMBIO - BLOOMBERG/);
 });
 
+test('formata valor detalhado em reais e substitui dimensão zerada', () => {
+  const raw = [
+    '| CLASSIFICACAO_GERENCIAL | CONTA_DO_RAZAO | QTD_LANCAMENTOS | VALOR |',
+    '| --- | --- | ---: | ---: |',
+    '| 0,0 | 4.102.010.104,0 | 1,0 | 46159.14 |',
+  ].join('\n');
+  const normalized = normalizeAgentReplyMarkdown(raw);
+  assert.match(normalized, /\| — \| 4102010104 \| 1 \| R\$ 46\.159,14 \|/);
+});
+
 test('limita e higieniza o histórico recebido do navegador', () => {
   const input = Array.from({ length: 30 }, (_, index) => ({ sender: index % 2 ? 'agent' : 'user', text: `mensagem ${index}` }));
   const history = sanitizeAgentHistory(input);

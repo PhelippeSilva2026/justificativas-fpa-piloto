@@ -71,6 +71,24 @@ function normalizeInteger(value: string): string {
   return plain.replace(/([,.]0+)$/, '');
 }
 
+function normalizeCurrency(value: string): string {
+  const plain = value.replace(/[`*_]/g, '').trim();
+  if (/^R\$/i.test(plain) || !/^-?\d+(?:\.\d+)?$/.test(plain)) return value;
+  const numeric = Number(plain);
+  if (!Number.isFinite(numeric)) return value;
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numeric).replace(/\u00a0/g, ' ');
+}
+
+function isDimensionHeader(header: string): boolean {
+  return ['NIVEL', 'AREA', 'CLASSIFICACAO', 'NIO', 'FORNECEDOR', 'CENTRO', 'EMPRESA', 'GERENCIAL']
+    .some((token) => header.includes(token));
+}
+
 export function normalizeAgentReplyMarkdown(raw: string): string {
   const lines = raw.split('\n');
   let headers: string[] | null = null;
@@ -98,6 +116,12 @@ export function normalizeAgentReplyMarkdown(raw: string): string {
         }
         if (header.includes('QTDLANCAMENTOS') || header.includes('QUANTIDADE')) {
           return normalizeInteger(cell);
+        }
+        if (header === 'VALOR' || header.includes('TOTALVALOR')) {
+          return normalizeCurrency(cell);
+        }
+        if (isDimensionHeader(header) && /^0(?:[,.]0+)?$/.test(cell.replace(/[`*_\s]/g, ''))) {
+          return '—';
         }
         return cell;
       });
