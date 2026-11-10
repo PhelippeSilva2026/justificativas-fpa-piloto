@@ -18,6 +18,7 @@ import {
   type ReportCompanyId,
 } from './server/wordReport';
 import { buildFastXlsxBuffer, queryBigQueryFast } from './server/excelExport';
+import { buildGroundedAgentPrompt, normalizeAgentReplyMarkdown } from './server/chatAgentPolicy';
 
 dotenv.config();
 EventEmitter.defaultMaxListeners = 100;
@@ -1869,6 +1870,7 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
     }
 
     const trimmedMsg = message.trim();
+    const groundedPrompt = buildGroundedAgentPrompt(trimmedMsg, history);
     let agentReply: string | null = null;
     let citations: Array<{ title: string; url?: string; snippet?: string }> = [];
 
@@ -1899,7 +1901,7 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
                 kind: 'message',
                 messageId,
                 role: 'user',
-                parts: [{ kind: 'text', text: trimmedMsg }],
+                parts: [{ kind: 'text', text: groundedPrompt }],
               },
             },
           })
@@ -1935,7 +1937,7 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
 
           const chosen = finalResponseText.trim() || dataResultText.trim();
           if (chosen) {
-            agentReply = chosen;
+            agentReply = normalizeAgentReplyMarkdown(chosen);
           }
         } else {
           console.warn('[Cloud Run fpa-a2a-agent] Resposta HTTP não autorizada:', a2aRes.status, await a2aRes.text());
@@ -2092,7 +2094,7 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
     if (agentReply) {
       return res.json({
         success: true,
-        reply: agentReply,
+        reply: normalizeAgentReplyMarkdown(agentReply),
         citations,
         source: citations[0]?.title || 'bigquery-live'
       });

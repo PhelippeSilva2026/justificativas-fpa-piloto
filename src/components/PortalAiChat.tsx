@@ -9,6 +9,7 @@ import {
   Check 
 } from 'lucide-react';
 import { CompanyId } from '../types';
+import { isChatSessionFresh } from '../utils/chatSession';
 
 interface ChatMessage {
   id: string;
@@ -20,6 +21,43 @@ interface ChatMessage {
 
 interface PortalAiChatProps {
   onSelectCompany?: (companyId: CompanyId) => void;
+}
+
+const CHAT_STORAGE_KEY = 'portal_ai_chat_session_v3';
+const LEGACY_CHAT_STORAGE_KEY = 'portal_ai_chat_messages_v2';
+
+const welcomeMessage = (): ChatMessage => ({
+  id: 'msg-welcome',
+  sender: 'agent',
+  text: 'Olá! Sou o **Agente de FP&A** da V.tal.\n\nComo posso apoiar sua análise de DRE, variações e desvios de **NIO Fibra**, **V.tal** e **Tecto** hoje?',
+  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  companyContext: 'all'
+});
+
+function loadChatSession(): ChatMessage[] {
+  try {
+    const savedSession = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (savedSession) {
+      const parsed = JSON.parse(savedSession) as { updatedAt?: number; messages?: ChatMessage[] };
+      if (
+        isChatSessionFresh(parsed.updatedAt) &&
+        Array.isArray(parsed.messages)
+      ) {
+        return parsed.messages;
+      }
+      localStorage.removeItem(CHAT_STORAGE_KEY);
+    }
+
+    const legacy = localStorage.getItem(LEGACY_CHAT_STORAGE_KEY);
+    if (legacy) {
+      const parsed = JSON.parse(legacy);
+      localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+  }
+  return [welcomeMessage()];
 }
 
 // Helper para renderizar formatações inline: negrito, itálico, código e remoção de escapes R\$
@@ -256,25 +294,7 @@ function renderMarkdownContent(rawText: string, isUser = false) {
 }
 
 export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const saved = localStorage.getItem('portal_ai_chat_messages_v2');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // ignora
-      }
-    }
-    return [
-      {
-        id: 'msg-welcome',
-        sender: 'agent',
-        text: 'Olá! Sou o **Agente de FP&A** da V.tal.\n\nComo posso apoiar sua análise de DRE, variações e desvios de **NIO Fibra**, **V.tal** e **Tecto** hoje?',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        companyContext: 'all'
-      }
-    ];
-  });
+  const [messages, setMessages] = useState<ChatMessage[]>(loadChatSession);
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -284,7 +304,7 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    localStorage.setItem('portal_ai_chat_messages_v2', JSON.stringify(messages));
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({ updatedAt: Date.now(), messages }));
   }, [messages]);
 
   useEffect(() => {
@@ -314,7 +334,9 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
         body: JSON.stringify({
           message: query,
           companyId: 'all',
-          history: messages.slice(-6)
+          // O servidor usa este histórico para resolver referências de continuidade
+          // ("isso", "aqui", "também") sem perder o assunto da conversa.
+          history: messages.slice(-24)
         })
       });
 
@@ -376,7 +398,8 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
       companyContext: 'all'
     };
     setMessages([welcome]);
-    localStorage.removeItem('portal_ai_chat_messages_v2');
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY);
   };
 
   const handleCopy = (id: string, text: string) => {
