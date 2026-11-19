@@ -6,10 +6,23 @@ import {
   User, 
   RotateCcw, 
   Copy, 
-  Check 
+  Check,
+  Paperclip,
+  X,
+  Download,
+  FileSpreadsheet,
+  Presentation
 } from 'lucide-react';
 import { CompanyId } from '../types';
 import { isChatSessionFresh } from '../utils/chatSession';
+
+interface ChatAttachment {
+  name: string;
+  mimeType: string;
+  size?: number;
+  dataBase64?: string;
+  url?: string;
+}
 
 interface ChatMessage {
   id: string;
@@ -17,6 +30,7 @@ interface ChatMessage {
   text: string;
   timestamp: string;
   companyContext?: CompanyId | 'all';
+  attachments?: ChatAttachment[];
 }
 
 interface PortalAiChatProps {
@@ -299,12 +313,19 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
   const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<ChatAttachment[]>([]);
+  const [fileError, setFileError] = useState('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({ updatedAt: Date.now(), messages }));
+    const lightweightMessages = messages.map((message) => ({
+      ...message,
+      attachments: message.attachments?.map(({ dataBase64: _dataBase64, ...file }) => file),
+    }));
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({ updatedAt: Date.now(), messages: lightweightMessages }));
   }, [messages]);
 
   useEffect(() => {
@@ -313,18 +334,28 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
 
   const handleSendMessage = async (textToSend?: string) => {
     const query = (textToSend || inputPrompt).trim();
-    if (!query || isLoading) return;
+    if ((!query && pendingFiles.length === 0) || isLoading) return;
+
+    const effectiveQuery = query || 'Analise os arquivos anexados e destaque os principais achados financeiros.';
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       sender: 'user',
-      text: query,
+      text: effectiveQuery,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      companyContext: 'all'
+      companyContext: 'all',
+      attachments: pendingFiles
     };
 
     setMessages((prev) => [...prev, userMessage]);
     setInputPrompt('');
+    const previousFiles = messages
+      .flatMap((message) => message.attachments || [])
+      .filter((file) => Boolean(file.dataBase64));
+    const filesToSend = Array.from(
+      new Map([...previousFiles, ...pendingFiles].map((file) => [file.name, file])).values()
+    ).slice(-4);
+    setPendingFiles([]);
     setIsLoading(true);
 
     try {
@@ -332,11 +363,12 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: query,
+          message: effectiveQuery,
           companyId: 'all',
           // O servidor usa este histórico para resolver referências de continuidade
           // ("isso", "aqui", "também") sem perder o assunto da conversa.
-          history: messages.slice(-24)
+          history: messages.slice(-24),
+          attachments: filesToSend
         })
       });
 
@@ -348,7 +380,8 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
           sender: 'agent',
           text: data.reply,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          companyContext: 'all'
+          companyContext: 'all',
+          attachments: Array.isArray(data.files) ? data.files : []
         };
         setMessages((prev) => [...prev, agentMessage]);
       } else {
@@ -400,6 +433,46 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
     setMessages([welcome]);
     localStorage.removeItem(CHAT_STORAGE_KEY);
     localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY);
+  };
+
+  const handleFilesSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files || []);
+    event.target.value = '';
+    setFileError('');
+    const availableSlots = Math.max(0, 4 - pendingFiles.length);
+    const accepted = selected.slice(0, availableSlots);
+    if (selected.length > availableSlots) setFileError('Máximo de 4 arquivos por mensagem.');
+
+    const encoded: ChatAttachment[] = [];
+    for (const file of accepted) {
+      if (file.size > 8 * 1024 * 1024) {
+        setFileError(`O arquivo ${file.name} ultrapassa o limite de 8 MB.`);
+        continue;
+      }
+      const dataBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      encoded.push({ name: file.name, mimeType: file.type || 'application/octet-stream', size: file.size, dataBase64 });
+    }
+    setPendingFiles((current) => [...current, ...encoded].slice(0, 4));
+  };
+
+  const downloadAttachment = (file: ChatAttachment) => {
+    if (file.url) {
+      window.open(file.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (!file.dataBase64) return;
+    const bytes = Uint8Array.from(atob(file.dataBase64), (char) => char.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: file.mimeType || 'application/octet-stream' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = file.name;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleCopy = (id: string, text: string) => {
@@ -459,6 +532,28 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
                   }`}
                 >
                   {renderMarkdownContent(msg.text, isUser)}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {msg.attachments.map((file, fileIndex) => {
+                        const downloadable = Boolean(file.dataBase64 || file.url);
+                        const isPpt = /presentation|powerpoint|pptx/i.test(file.mimeType + file.name);
+                        return (
+                          <button
+                            type="button"
+                            key={`${file.name}-${fileIndex}`}
+                            onClick={() => downloadable && downloadAttachment(file)}
+                            disabled={!downloadable}
+                            className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] ${isUser ? 'border-white/25 bg-white/10 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-800'} ${downloadable ? 'cursor-pointer hover:bg-neutral-100' : 'cursor-default opacity-80'}`}
+                            title={downloadable ? `Baixar ${file.name}` : file.name}
+                          >
+                            {isPpt ? <Presentation className="w-4 h-4" /> : <FileSpreadsheet className="w-4 h-4" />}
+                            <span className="max-w-52 truncate">{file.name}</span>
+                            {downloadable && <Download className="w-3.5 h-3.5" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Rodapé da mensagem com hora e botão de copiar */}
@@ -503,7 +598,38 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
 
       {/* Caixa de Entrada de Mensagem */}
       <div className="p-3 sm:p-4 bg-white border-t border-neutral-200 shrink-0">
+        {pendingFiles.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {pendingFiles.map((file, index) => (
+              <div key={`${file.name}-${index}`} className="flex items-center gap-2 rounded-xl border border-neutral-300 bg-neutral-50 px-3 py-2 text-[11px] text-neutral-700">
+                <Paperclip className="w-3.5 h-3.5" />
+                <span className="max-w-48 truncate">{file.name}</span>
+                <button type="button" onClick={() => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} title="Remover anexo">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {fileError && <div className="mb-2 text-[10px] font-semibold text-red-600">{fileError}</div>}
         <div className="relative flex items-end gap-2 bg-[#F8F9FA] border border-neutral-300 focus-within:border-slate-500 focus-within:ring-2 focus-within:ring-slate-500/10 rounded-2xl p-2 transition-all shadow-2xs">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept=".xlsx,.xls,.csv,.pdf,.docx,.pptx,.json,.txt,.png,.jpg,.jpeg,.webp"
+            onChange={handleFilesSelected}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading || pendingFiles.length >= 4}
+            className="p-2.5 rounded-xl text-neutral-600 hover:bg-neutral-200 disabled:opacity-30 cursor-pointer"
+            title="Anexar arquivos"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <textarea
             ref={textareaRef}
             rows={2}
@@ -518,7 +644,7 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
           <button
             type="button"
             onClick={() => handleSendMessage()}
-            disabled={!inputPrompt.trim() || isLoading}
+            disabled={(!inputPrompt.trim() && pendingFiles.length === 0) || isLoading}
             className="bg-[#475569] hover:bg-[#334155] text-white p-2.5 rounded-xl font-bold shadow-xs transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer shrink-0"
             title="Enviar mensagem (Enter)"
           >
@@ -527,7 +653,7 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
         </div>
 
         <div className="flex items-center justify-between text-[10px] text-neutral-500 mt-1.5 px-1">
-          <span>Pressione <strong>Enter</strong> para enviar, <strong>Shift+Enter</strong> para nova linha.</span>
+          <span>Anexe arquivos ou peça: <strong>“gere um Excel”</strong> / <strong>“gere um PPT”</strong>.</span>
         </div>
       </div>
     </div>

@@ -19,6 +19,7 @@ import {
 } from './server/wordReport';
 import { buildFastXlsxBuffer, queryBigQueryFast } from './server/excelExport';
 import { buildGroundedAgentPrompt, normalizeAgentReplyMarkdown } from './server/chatAgentPolicy';
+import { buildChatArtifact, requestedArtifactFormat, type ChatFilePayload } from './server/chatArtifacts';
 
 dotenv.config();
 EventEmitter.defaultMaxListeners = 100;
@@ -29,7 +30,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '50mb' }));
 
 // Carregar credenciais padrão da Service Account salvas no servidor
 let defaultCredentials: Record<string, unknown> | null = null;
@@ -1864,14 +1865,24 @@ function formatBRLServer(val: number): string {
 // Endpoint de Chat com Agente Vertex AI Search, Gemini Data Analytics e BigQuery Live
 app.post('/api/agent/chat', async (req: Request, res: Response) => {
   try {
-    const { message, companyId = 'all', history = [] } = req.body || {};
+    const { message, companyId = 'all', history = [], attachments = [] } = req.body || {};
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ success: false, message: 'Mensagem é obrigatória.' });
     }
 
     const trimmedMsg = message.trim();
-    const groundedPrompt = buildGroundedAgentPrompt(trimmedMsg, history);
+    const inputFiles: ChatFilePayload[] = Array.isArray(attachments)
+      ? attachments.slice(0, 4).filter((file: ChatFilePayload) =>
+          file && typeof file.name === 'string' && typeof file.mimeType === 'string' &&
+          typeof file.dataBase64 === 'string' && file.dataBase64.length <= 12_000_000
+        )
+      : [];
+    const fileContext = inputFiles.length
+      ? `\n\nARQUIVOS ANEXADOS PELO USUÁRIO: ${inputFiles.map((file) => file.name).join(', ')}. Analise o conteúdo dos arquivos junto com a solicitação.`
+      : '';
+    const groundedPrompt = buildGroundedAgentPrompt(trimmedMsg + fileContext, history);
     let agentReply: string | null = null;
+    const agentFiles: ChatFilePayload[] = [];
     let citations: Array<{ title: string; url?: string; snippet?: string }> = [];
 
     // 1. TENTATIVA 1: Agente Executivo de FP&A no Cloud Run (fpa-a2a-agent / A2A Protocol)
@@ -1901,7 +1912,13 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
                 kind: 'message',
                 messageId,
                 role: 'user',
-                parts: [{ kind: 'text', text: groundedPrompt }],
+                parts: [
+                  { kind: 'text', text: groundedPrompt },
+                  ...inputFiles.map((file) => ({
+                    kind: 'file',
+                    file: { name: file.name, mimeType: file.mimeType, bytes: file.dataBase64 },
+                  })),
+                ],
               },
             },
           })
@@ -1927,6 +1944,22 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
                         finalResponseText += (finalResponseText ? '\n\n' : '') + part.text;
                       } else {
                         dataResultText += (dataResultText ? '\n\n' : '') + part.text;
+                      }
+                    }
+                    if (part.file) {
+                      const file = part.file;
+                      if (typeof file.bytes === 'string' && file.bytes.length <= 20_000_000) {
+                        agentFiles.push({
+                          name: file.name || `arquivo-${agentFiles.length + 1}`,
+                          mimeType: file.mimeType || 'application/octet-stream',
+                          dataBase64: file.bytes,
+                        });
+                      } else if (typeof file.uri === 'string' && /^https:\/\//i.test(file.uri)) {
+                        agentFiles.push({
+                          name: file.name || `arquivo-${agentFiles.length + 1}`,
+                          mimeType: file.mimeType || 'application/octet-stream',
+                          url: file.uri,
+                        });
                       }
                     }
                   }
@@ -2092,9 +2125,18 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
     }
 
     if (agentReply) {
+      const requestedFormat = requestedArtifactFormat(trimmedMsg);
+      if (requestedFormat && agentFiles.length === 0) {
+        try {
+          agentFiles.push(await buildChatArtifact(requestedFormat, trimmedMsg, agentReply));
+        } catch (artifactError) {
+          console.warn('[Chat Agent] Não foi possível gerar o arquivo solicitado:', artifactError);
+        }
+      }
       return res.json({
         success: true,
         reply: normalizeAgentReplyMarkdown(agentReply),
+        files: agentFiles,
         citations,
         source: citations[0]?.title || 'bigquery-live'
       });
