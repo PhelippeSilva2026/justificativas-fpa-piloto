@@ -70,9 +70,9 @@ export async function extractAttachmentContext(files: ChatFilePayload[]): Promis
 
 export function requestedArtifactFormat(message: string): 'xlsx' | 'pptx' | 'pdf' | null {
   const normalized = message.toLowerCase();
-  if (/\b(excel|xlsx|planilha)\b/.test(normalized) && /\b(ger|cri|mont|export|baix|cusp)/.test(normalized)) return 'xlsx';
   if (/\b(pdf|relat[oó]rio em pdf)\b/.test(normalized) && /\b(ger|cri|mont|export|baix|cusp)/.test(normalized)) return 'pdf';
   if (/\b(ppt|pptx|powerpoint|apresenta[cç][aã]o|slide)\b/.test(normalized) && /\b(ger|cri|mont|export|baix|cusp)/.test(normalized)) return 'pptx';
+  if (/\b(excel|xlsx|planilha)\b/.test(normalized) && /\b(ger|cri|mont|export|baix|cusp)/.test(normalized)) return 'xlsx';
   return null;
 }
 

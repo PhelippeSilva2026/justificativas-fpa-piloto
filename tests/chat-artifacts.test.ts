@@ -13,6 +13,7 @@ const answer = [
 test('identifica pedidos explícitos de Excel, PowerPoint e PDF', () => {
   assert.equal(requestedArtifactFormat('Gere uma planilha Excel desta análise'), 'xlsx');
   assert.equal(requestedArtifactFormat('Crie um PPT executivo'), 'pptx');
+  assert.equal(requestedArtifactFormat('Segue o Excel, gere um PPT executivo'), 'pptx');
   assert.equal(requestedArtifactFormat('Gere uma apresentação em PDF'), 'pdf');
   assert.equal(requestedArtifactFormat('Qual o EBITDA?'), null);
 });
