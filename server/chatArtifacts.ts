@@ -2,6 +2,8 @@ import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
 import { createRequire } from 'node:module';
 import { buildUpfrontExecutivePpt } from './executivePpt';
+import { buildDynamicDeck, extractDeckSpec } from './dynamicDeck';
+import { buildDynamicPdf } from './dynamicPdf';
 
 const require = createRequire(import.meta.url);
 const JSZip = createRequire(require.resolve('pptxgenjs'))('jszip');
@@ -66,9 +68,10 @@ export async function extractAttachmentContext(files: ChatFilePayload[]): Promis
   return sections.join('\n').slice(0, 350_000);
 }
 
-export function requestedArtifactFormat(message: string): 'xlsx' | 'pptx' | null {
+export function requestedArtifactFormat(message: string): 'xlsx' | 'pptx' | 'pdf' | null {
   const normalized = message.toLowerCase();
   if (/\b(excel|xlsx|planilha)\b/.test(normalized) && /\b(ger|cri|mont|export|baix|cusp)/.test(normalized)) return 'xlsx';
+  if (/\b(pdf|relat[oó]rio em pdf)\b/.test(normalized) && /\b(ger|cri|mont|export|baix|cusp)/.test(normalized)) return 'pdf';
   if (/\b(ppt|pptx|powerpoint|apresenta[cç][aã]o|slide)\b/.test(normalized) && /\b(ger|cri|mont|export|baix|cusp)/.test(normalized)) return 'pptx';
   return null;
 }
@@ -103,7 +106,7 @@ function safeFileStem(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'Analise_FPA';
 }
 
-export async function buildChatArtifact(format: 'xlsx' | 'pptx', question: string, answer: string, sourceFiles: ChatFilePayload[] = []): Promise<ChatFilePayload> {
+export async function buildChatArtifact(format: 'xlsx' | 'pptx' | 'pdf', question: string, answer: string, sourceFiles: ChatFilePayload[] = []): Promise<ChatFilePayload> {
   const stem = safeFileStem(question);
   const tables = extractMarkdownTables(answer);
 
@@ -124,6 +127,30 @@ export async function buildChatArtifact(format: 'xlsx' | 'pptx', question: strin
       name: `${stem}.xlsx`,
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       dataBase64: buffer.toString('base64'),
+    };
+  }
+
+  const dynamicSpec = extractDeckSpec(answer);
+  if (format === 'pdf') {
+    const pdfSpec = dynamicSpec || {
+      title: question,
+      subtitle: 'Análise executiva FP&A',
+      slides: [{
+        title: 'Síntese executiva | Resultado da análise',
+        subtitle: 'Conteúdo gerado pela inteligência FP&A',
+        type: 'content' as const,
+        bullets: answer.replace(/\*\*/g, '').split(/\n+/).filter(Boolean).slice(0, 8).map((text) => ({ text })),
+      }],
+    };
+    const pdfBuffer = await buildDynamicPdf(pdfSpec);
+    return { name: `${stem}.pdf`, mimeType: 'application/pdf', dataBase64: pdfBuffer.toString('base64') };
+  }
+  if (dynamicSpec) {
+    const dynamicBuffer = await buildDynamicDeck(dynamicSpec);
+    return {
+      name: `${stem}.pptx`,
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      dataBase64: dynamicBuffer.toString('base64'),
     };
   }
 

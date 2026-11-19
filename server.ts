@@ -20,6 +20,7 @@ import {
 import { buildFastXlsxBuffer, queryBigQueryFast } from './server/excelExport';
 import { buildGroundedAgentPrompt, normalizeAgentReplyMarkdown } from './server/chatAgentPolicy';
 import { buildChatArtifact, extractAttachmentContext, requestedArtifactFormat, type ChatFilePayload } from './server/chatArtifacts';
+import { stripDeckSpec } from './server/dynamicDeck';
 
 dotenv.config();
 EventEmitter.defaultMaxListeners = 100;
@@ -1877,11 +1878,15 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
           typeof file.dataBase64 === 'string' && file.dataBase64.length <= 12_000_000
         )
       : [];
+    const requestedFormat = requestedArtifactFormat(trimmedMsg);
     const extractedFileContext = await extractAttachmentContext(inputFiles);
     const fileContext = inputFiles.length
       ? `\n\nARQUIVOS ANEXADOS PELO USUÁRIO: ${inputFiles.map((file) => file.name).join(', ')}. Analise o conteúdo dos arquivos junto com a solicitação.${extractedFileContext}`
       : '';
-    const groundedPrompt = buildGroundedAgentPrompt(trimmedMsg + fileContext, history);
+    const deckPlanningInstruction = requestedFormat === 'pptx' || requestedFormat === 'pdf'
+      ? `\n\nINSTRUÇÃO PARA GERAR O ARQUIVO: além da resposta executiva normal, finalize com um plano de apresentação em JSON válido entre os marcadores <<<DECK_SPEC_JSON>>> e <<<END_DECK_SPEC_JSON>>>. O plano deve ser criado por você a partir da pergunta e dos arquivos: escolha livremente entre 3 e 15 slides de conteúdo, somente os necessários para contar a história. Não use roteiro fixo. Estrutura: {"title":"...","subtitle":"...","slides":[{"title":"Tema | Recorte","subtitle":"unidade e período","type":"summary|chart|table|recommendations|content","takeaway":"conclusão numérica","kpis":[{"label":"...","value":"...","note":"...","tone":"primary|positive|negative|neutral"}],"chart":{"type":"column|bar|line|stacked","categories":["..."],"series":[{"name":"...","values":[1,2]}]},"table":{"headers":["..."],"rows":[["...",1]]},"bullets":[{"title":"...","text":"..."}],"recommendations":[{"title":"...","detail":"...","badge":"..."}]}]}. Use números exatos dos dados; escolha gráficos coerentes; evite duplicar o mesmo insight; cada slide precisa de uma mensagem e, quando aplicável, uma conclusão no takeaway. O JSON é para o renderizador e não substitui a resposta ao usuário.`
+      : '';
+    const groundedPrompt = buildGroundedAgentPrompt(trimmedMsg + fileContext + deckPlanningInstruction, history);
     let agentReply: string | null = null;
     const agentFiles: ChatFilePayload[] = [];
     let citations: Array<{ title: string; url?: string; snippet?: string }> = [];
@@ -2126,7 +2131,6 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
     }
 
     if (agentReply) {
-      const requestedFormat = requestedArtifactFormat(trimmedMsg);
       if (requestedFormat && agentFiles.length === 0) {
         try {
           agentFiles.push(await buildChatArtifact(requestedFormat, trimmedMsg, agentReply, inputFiles));
@@ -2136,7 +2140,7 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
       }
       return res.json({
         success: true,
-        reply: normalizeAgentReplyMarkdown(agentReply),
+        reply: stripDeckSpec(normalizeAgentReplyMarkdown(agentReply)),
         files: agentFiles,
         citations,
         source: citations[0]?.title || 'bigquery-live'

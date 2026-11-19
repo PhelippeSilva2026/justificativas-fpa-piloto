@@ -10,10 +10,19 @@ const answer = [
   '| Bloomberg | 4102010104 | R$ 90.543,41 |',
 ].join('\n');
 
-test('identifica pedidos explícitos de Excel e PowerPoint', () => {
+test('identifica pedidos explícitos de Excel, PowerPoint e PDF', () => {
   assert.equal(requestedArtifactFormat('Gere uma planilha Excel desta análise'), 'xlsx');
   assert.equal(requestedArtifactFormat('Crie um PPT executivo'), 'pptx');
+  assert.equal(requestedArtifactFormat('Gere uma apresentação em PDF'), 'pdf');
   assert.equal(requestedArtifactFormat('Qual o EBITDA?'), null);
+});
+
+test('gera PDF válido com a análise', async () => {
+  const file = await buildChatArtifact('pdf', 'Crie um PDF executivo', answer);
+  assert.match(file.name, /\.pdf$/);
+  const bytes = Buffer.from(file.dataBase64!, 'base64');
+  assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
+  assert.ok(bytes.length > 1_000);
 });
 
 test('extrai tabelas markdown para arquivos', () => {
