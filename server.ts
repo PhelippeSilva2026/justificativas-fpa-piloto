@@ -2129,7 +2129,7 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
       const requestedFormat = requestedArtifactFormat(trimmedMsg);
       if (requestedFormat && agentFiles.length === 0) {
         try {
-          agentFiles.push(await buildChatArtifact(requestedFormat, trimmedMsg, agentReply));
+          agentFiles.push(await buildChatArtifact(requestedFormat, trimmedMsg, agentReply, inputFiles));
         } catch (artifactError) {
           console.warn('[Chat Agent] Não foi possível gerar o arquivo solicitado:', artifactError);
         }

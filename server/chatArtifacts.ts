@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
 import { createRequire } from 'node:module';
+import { buildUpfrontExecutivePpt } from './executivePpt';
 
 const require = createRequire(import.meta.url);
 const JSZip = createRequire(require.resolve('pptxgenjs'))('jszip');
@@ -102,7 +103,7 @@ function safeFileStem(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'Analise_FPA';
 }
 
-export async function buildChatArtifact(format: 'xlsx' | 'pptx', question: string, answer: string): Promise<ChatFilePayload> {
+export async function buildChatArtifact(format: 'xlsx' | 'pptx', question: string, answer: string, sourceFiles: ChatFilePayload[] = []): Promise<ChatFilePayload> {
   const stem = safeFileStem(question);
   const tables = extractMarkdownTables(answer);
 
@@ -123,6 +124,15 @@ export async function buildChatArtifact(format: 'xlsx' | 'pptx', question: strin
       name: `${stem}.xlsx`,
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       dataBase64: buffer.toString('base64'),
+    };
+  }
+
+  const executiveBuffer = await buildUpfrontExecutivePpt(question, sourceFiles);
+  if (executiveBuffer) {
+    return {
+      name: `${stem}.pptx`,
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      dataBase64: executiveBuffer.toString('base64'),
     };
   }
 
