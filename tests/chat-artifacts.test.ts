@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as XLSX from 'xlsx';
-import { buildChatArtifact, extractMarkdownTables, requestedArtifactFormat } from '../server/chatArtifacts';
+import { buildChatArtifact, extractAttachmentContext, extractMarkdownTables, requestedArtifactFormat } from '../server/chatArtifacts';
 
 const answer = [
   '### Resultado',
@@ -38,4 +38,18 @@ test('gera PowerPoint válido com a análise', async () => {
   const bytes = Buffer.from(file.dataBase64!, 'base64');
   assert.equal(bytes.subarray(0, 2).toString(), 'PK');
   assert.ok(bytes.length > 10_000);
+});
+
+test('extrai o conteúdo real de CSV e Excel anexados', async () => {
+  const csv = Buffer.from('fornecedor,valor\nFornecedor A,1000').toString('base64');
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['indicador', 'valor'], ['EBITDA', 2500]]), 'Dados');
+  const xlsx = (XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer).toString('base64');
+  const context = await extractAttachmentContext([
+    { name: 'fornecedores.csv', mimeType: 'text/csv', dataBase64: csv },
+    { name: 'financeiro.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', dataBase64: xlsx },
+  ]);
+  assert.match(context, /Fornecedor A,1000/);
+  assert.match(context, /ABA Dados/);
+  assert.match(context, /EBITDA,2500/);
 });

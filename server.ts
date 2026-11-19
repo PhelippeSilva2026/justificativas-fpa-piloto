@@ -19,7 +19,7 @@ import {
 } from './server/wordReport';
 import { buildFastXlsxBuffer, queryBigQueryFast } from './server/excelExport';
 import { buildGroundedAgentPrompt, normalizeAgentReplyMarkdown } from './server/chatAgentPolicy';
-import { buildChatArtifact, requestedArtifactFormat, type ChatFilePayload } from './server/chatArtifacts';
+import { buildChatArtifact, extractAttachmentContext, requestedArtifactFormat, type ChatFilePayload } from './server/chatArtifacts';
 
 dotenv.config();
 EventEmitter.defaultMaxListeners = 100;
@@ -1877,8 +1877,9 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
           typeof file.dataBase64 === 'string' && file.dataBase64.length <= 12_000_000
         )
       : [];
+    const extractedFileContext = await extractAttachmentContext(inputFiles);
     const fileContext = inputFiles.length
-      ? `\n\nARQUIVOS ANEXADOS PELO USUÁRIO: ${inputFiles.map((file) => file.name).join(', ')}. Analise o conteúdo dos arquivos junto com a solicitação.`
+      ? `\n\nARQUIVOS ANEXADOS PELO USUÁRIO: ${inputFiles.map((file) => file.name).join(', ')}. Analise o conteúdo dos arquivos junto com a solicitação.${extractedFileContext}`
       : '';
     const groundedPrompt = buildGroundedAgentPrompt(trimmedMsg + fileContext, history);
     let agentReply: string | null = null;

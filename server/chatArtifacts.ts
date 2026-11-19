@@ -1,11 +1,68 @@
 import * as XLSX from 'xlsx';
 import PptxGenJS from 'pptxgenjs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const JSZip = createRequire(require.resolve('pptxgenjs'))('jszip');
 
 export interface ChatFilePayload {
   name: string;
   mimeType: string;
   dataBase64?: string;
   url?: string;
+}
+
+function xmlToText(xml: string): string {
+  return xml
+    .replace(/<w:tab\/?\s*>/g, '\t')
+    .replace(/<w:br\/?\s*>/g, '\n')
+    .replace(/<a:br\/?\s*>/g, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s+/g, '\n')
+    .trim();
+}
+
+export async function extractAttachmentContext(files: ChatFilePayload[]): Promise<string> {
+  const sections: string[] = [];
+  for (const file of files) {
+    if (!file.dataBase64) continue;
+    const buffer = Buffer.from(file.dataBase64, 'base64');
+    const extension = file.name.toLowerCase().split('.').pop() || '';
+    let content = '';
+    try {
+      if (['csv', 'txt', 'json', 'md', 'xml'].includes(extension) || /^text\//i.test(file.mimeType)) {
+        content = buffer.toString('utf8');
+      } else if (['xlsx', 'xls'].includes(extension)) {
+        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        content = workbook.SheetNames.slice(0, 12).map((sheetName) =>
+          `ABA ${sheetName}:\n${XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName])}`
+        ).join('\n\n');
+      } else if (extension === 'docx') {
+        const zip = await JSZip.loadAsync(buffer);
+        const xml = await zip.file('word/document.xml')?.async('string');
+        content = xml ? xmlToText(xml) : '';
+      } else if (extension === 'pptx') {
+        const zip = await JSZip.loadAsync(buffer);
+        const slideNames = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        const slides = await Promise.all(slideNames.slice(0, 40).map(async (name, index) =>
+          `SLIDE ${index + 1}:\n${xmlToText(await zip.file(name)!.async('string'))}`
+        ));
+        content = slides.join('\n\n');
+      }
+    } catch {
+      content = '';
+    }
+    if (content.trim()) {
+      sections.push(`\n--- INÍCIO DO ARQUIVO ${file.name} ---\n${content.slice(0, 180_000)}\n--- FIM DO ARQUIVO ${file.name} ---`);
+    }
+  }
+  return sections.join('\n').slice(0, 350_000);
 }
 
 export function requestedArtifactFormat(message: string): 'xlsx' | 'pptx' | null {
