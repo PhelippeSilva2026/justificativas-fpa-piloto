@@ -43,7 +43,7 @@ const LEGACY_CHAT_STORAGE_KEY = 'portal_ai_chat_messages_v2';
 const welcomeMessage = (): ChatMessage => ({
   id: 'msg-welcome',
   sender: 'agent',
-  text: 'Olá! Sou o **Agente de FP&A** da V.tal.\n\nComo posso apoiar sua análise de DRE, variações e desvios de **NIO Fibra**, **V.tal** e **Tecto** hoje?',
+  text: 'Olá! Sou o **Agente Financeiro**.\n\nConsulte dados financeiros, analise arquivos e gere relatórios executivos de **NIO Fibra**, **V.tal** e **Tecto**.',
   timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
   companyContext: 'all'
 });
@@ -426,7 +426,7 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
     const welcome: ChatMessage = {
       id: `msg-welcome-${Date.now()}`,
       sender: 'agent',
-      text: 'Conversa reiniciada. Em que posso colaborar na análise de FP&A do grupo?',
+      text: 'Conversa reiniciada. Em que posso colaborar nas análises e relatórios financeiros hoje?',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       companyContext: 'all'
     };
@@ -482,17 +482,20 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
   };
 
   return (
-    <div className="bg-white rounded-3xl border border-neutral-300 shadow-md flex flex-col h-full max-h-full overflow-hidden">
-      {/* Topo do Painel de Chat - Estilo Executivo Claro e Límpido */}
-      <div className="bg-[#F8F9FA] text-neutral-800 px-5 py-3 border-b border-neutral-200 flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-white border border-neutral-300 flex items-center justify-center text-neutral-700 shadow-2xs">
-            <Bot className="w-4.5 h-4.5 text-neutral-700" />
+    <div className="bg-white rounded-3xl border border-[#D8DCE0] shadow-xs flex flex-col h-full max-h-full overflow-hidden">
+      {/* Topo do Painel de Chat - Estilo Executivo Neutro Power BI */}
+      <div className="bg-[#F8F9FA] text-neutral-800 px-5 py-3 border-b border-[#E5E7EB] flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-[#F3F4F6] border border-[#E5E7EB] flex items-center justify-center text-[#18181B] shadow-2xs shrink-0">
+            <Bot className="w-4.5 h-4.5 text-[#18181B]" />
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-neutral-800 tracking-tight">
-              Agente FP&amp;A
+          <div className="min-w-0">
+            <h3 className="text-sm sm:text-base font-extrabold text-[#18181B] tracking-tight leading-tight">
+              Agente Financeiro
             </h3>
+            <p className="text-[11px] text-[#52525B] truncate">
+              Consulte dados financeiros, analise arquivos e gere relatórios executivos.
+            </p>
           </div>
         </div>
 
@@ -527,7 +530,7 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
                 <div
                   className={`p-4 rounded-2xl text-xs leading-relaxed shadow-2xs ${
                     isUser
-                      ? 'bg-[#475569] text-white rounded-tr-xs'
+                      ? 'bg-[#242424] text-white rounded-tr-xs'
                       : 'bg-white border border-neutral-300 text-neutral-800 rounded-tl-xs'
                   }`}
                 >
@@ -637,7 +640,7 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
             onChange={(e) => setInputPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isLoading}
-            placeholder="Pergunte ao Agente FP&A sobre EBITDA, desvios, custos ou indicadores..."
+            placeholder="Pergunte ao Agente Financeiro sobre resultados, desvios, custos ou relatórios..."
             className="flex-1 bg-transparent border-none outline-none text-xs text-neutral-900 placeholder-neutral-400 resize-none leading-relaxed px-1"
           />
 
@@ -645,7 +648,7 @@ export const PortalAiChat: React.FC<PortalAiChatProps> = () => {
             type="button"
             onClick={() => handleSendMessage()}
             disabled={(!inputPrompt.trim() && pendingFiles.length === 0) || isLoading}
-            className="bg-[#475569] hover:bg-[#334155] text-white p-2.5 rounded-xl font-bold shadow-xs transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer shrink-0"
+            className="bg-[#242424] hover:bg-[#3A3A3D] text-white p-2.5 rounded-xl font-bold shadow-xs transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer shrink-0"
             title="Enviar mensagem (Enter)"
           >
             <Send className="w-4 h-4 text-white" />

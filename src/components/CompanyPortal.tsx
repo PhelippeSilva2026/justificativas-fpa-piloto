@@ -9,11 +9,13 @@ import { PortalAiChat } from './PortalAiChat';
 interface CompanyPortalProps {
   onSelectCompany: (companyId: CompanyId) => void;
   savedCounts: Record<CompanyId, number>;
+  embeddedInClosingPage?: boolean;
 }
 
 export const CompanyPortal: React.FC<CompanyPortalProps> = ({
   onSelectCompany,
-  savedCounts
+  savedCounts,
+  embeddedInClosingPage = false,
 }) => {
   const [reportCompany, setReportCompany] = useState<CompanyId | null>(null);
   const [reportMonth, setReportMonth] = useState(REPORT_MONTH);
@@ -21,8 +23,8 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
   const [reportError, setReportError] = useState('');
 
   // Modo padrão do portal: 'split' (cards de operações à esquerda e Chat com IA à direita)
-  // O layout clássico permanece preservado caso seja necessário reativar
-  const [viewMode] = useState<'split' | 'classic'>('split');
+  // Quando incorporado na página Fechamento e Justificativas, exibe a grade horizontal de 3 colunas
+  const [viewMode] = useState<'split' | 'classic'>(embeddedInClosingPage ? 'classic' : 'split');
 
   // Referência para alinhar a altura exata da tela de chat com a base do card da Tecto
   const leftColRef = useRef<HTMLDivElement>(null);
@@ -92,7 +94,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
     <button
       type="button"
       onClick={(event) => openReport(event, companyId)}
-      className={`border border-[#B9C2BC] bg-white hover:bg-[#F2F6F3] text-[#24352C] font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs ${
+      className={`border border-[#D1D5DB] bg-[#FAFAFA] hover:bg-[#F3F4F6] text-[#18181B] font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs ${
         isCompact ? 'mt-2 w-full text-[11px] py-1.5 px-3' : 'mt-3 w-full text-xs px-4 py-2.5'
       }`}
     >
@@ -102,27 +104,26 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
   );
 
   return (
-    <div className="min-h-screen bg-[#F3F3F3] text-[#252525] flex flex-col font-sans selection:bg-[#4F927F]/25 selection:text-[#202020]">
-      {/* Top Bar Corporativa */}
-      <header className="bg-[#242424] text-white border-b border-black px-4 sm:px-6 py-2.5 shadow-sm sticky top-0 z-20">
-        <div className="w-full flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <img
-              src="/Logos/fpa-logo.jfif"
-              alt="Logo FP&A"
-              className="w-12 h-9 rounded-lg object-cover shadow-sm"
-            />
-            <div>
-              <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
-                Plataforma de Inteligência Financeira | FP&amp;A
-              </h1>
-              <p className="text-[11px] text-white/70">
-                FP&A ManagementCo · NIO · V.tal · Tecto
-              </p>
+    <div className={`${embeddedInClosingPage ? 'flex-1 bg-transparent' : 'min-h-screen bg-[#F3F4F6]'} text-[#18181B] flex flex-col font-sans selection:bg-[#242424]/15 selection:text-[#18181B]`}>
+      {/* Top Bar Corporativa (exibida apenas no modo standalone) */}
+      {!embeddedInClosingPage && (
+        <header className="bg-[#14412A] text-white border-b border-[#0E2F1E] px-4 sm:px-6 py-2.5 shadow-sm sticky top-0 z-20">
+          <div className="w-full flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <img
+                src="/Logos/fpa-logo.jfif"
+                alt="Plataforma Financeira"
+                className="w-12 h-9 rounded-lg object-cover shadow-sm"
+              />
+              <div>
+                <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
+                  Plataforma Financeira
+                </h1>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* CONTEÚDO PRINCIPAL */}
       {viewMode === 'split' ? (
@@ -282,57 +283,55 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
            TELA CLÁSSICA ORIGINAL (PRESERVADA 100%):
            - Grade horizontal de 3 Colunas com os 3 Cards Grandes
            ============================================================ */
-        <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-12 flex flex-col justify-center">
-          <div className="text-center max-w-3xl mx-auto mb-12">
-            <span className="text-xs font-bold uppercase tracking-widest text-[#14412A] bg-[#E2DFD2] px-3 py-1 rounded-md">
-              Portal de análise FP&A (Modo Clássico)
-            </span>
-            <h2 className="text-3xl md:text-4xl font-extrabold text-[#252525] tracking-tight mt-4">
-              O que você deseja analisar hoje?
-            </h2>
+        <main className={`flex-1 w-full flex flex-col ${embeddedInClosingPage ? 'py-1' : 'px-4 sm:px-6 lg:px-8 py-10 justify-center'}`}>
+          <div className={`${embeddedInClosingPage ? 'mb-6' : 'text-center max-w-3xl mx-auto mb-10'}`}>
+            <h1 className="text-2xl sm:text-[28px] font-extrabold text-[#18181B] tracking-tight leading-tight">
+              Fechamento e Justificativas
+            </h1>
+            <p className="text-xs sm:text-sm text-[#52525B] mt-1 font-medium">
+              Selecione uma empresa para analisar o fechamento, consultar desvios e registrar justificativas.
+            </p>
           </div>
 
-          {/* Grade com os 3 Cards Executivos: NIO, V.tal e Tecto */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto w-full">
+          {/* Grade com os 3 Cards Executivos em paleta neutra: NIO, V.tal e Tecto */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 lg:gap-6 w-full">
             {/* CARD 1: NIO */}
             <div
               onClick={() => onSelectCompany('nio')}
-              className="group relative bg-white rounded-3xl border border-[#D5D5D5] hover:border-[#4F927F] p-7 transition-all duration-300 hover:shadow-xl cursor-pointer flex flex-col justify-between overflow-hidden"
+              className="group relative bg-white rounded-3xl border border-[#D8DCE0] hover:border-[#242424] p-7 transition-all duration-200 hover:shadow-lg cursor-pointer flex flex-col justify-between overflow-hidden"
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-[#22E600]/10 rounded-full blur-2xl pointer-events-none group-hover:bg-[#22E600]/20 transition-all duration-500"></div>
-
               <div>
                 <div className="flex items-center justify-between mb-6">
-                  <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-md flex-shrink-0">
+                  <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-sm flex-shrink-0">
                     <CompanyLogo companyId="nio" size="lg" className="w-full h-full" />
                   </div>
 
-                  <span className="text-[11px] font-semibold text-[#14412A] bg-[#22E600]/20 px-2.5 py-1 rounded-lg border border-[#22E600]/40">
+                  <span className="text-[11px] font-semibold text-[#3F3F46] bg-[#F4F4F5] px-2.5 py-1 rounded-lg border border-[#E4E4E7]">
                     Operação FTTH
                   </span>
                 </div>
 
-                <h3 className="text-2xl font-black text-[#14412A] group-hover:text-[#0F351D] transition-colors">
+                <h3 className="text-2xl font-black text-[#18181B] group-hover:text-[#09090B] transition-colors">
                   {COMPANIES.nio.name}
                 </h3>
-                <p className="text-xs font-semibold text-[#52604D] mt-1 mb-3">
+                <p className="text-xs font-semibold text-[#52525B] mt-1 mb-2">
                   {COMPANIES.nio.tagline}
                 </p>
               </div>
 
-              <div className="mt-8 pt-4 border-t border-[#F0ECE1] flex items-center justify-between">
-                <span className="text-xs text-[#52604D] font-medium">
+              <div className="mt-8 pt-4 border-t border-[#E5E7EB] flex items-center justify-between">
+                <span className="text-xs text-[#52525B] font-medium tabular-nums">
                   {savedCounts.nio > 0 ? (
-                    <span className="text-[#14412A] font-semibold">
+                    <span className="text-[#18181B] font-semibold">
                       ✓ {savedCounts.nio} contas com notas
                     </span>
                   ) : (
                     'Pronto para preenchimento'
                   )}
                 </span>
-                <button className="bg-[#14412A] text-[#39FF00] font-bold text-xs px-4 py-2 rounded-xl group-hover:bg-[#0F2F1B] group-hover:shadow-md transition-all flex items-center gap-1.5">
+                <button className="bg-[#242424] text-white font-bold text-xs px-4 py-2 rounded-xl group-hover:bg-[#3A3A3D] group-hover:shadow-sm transition-all flex items-center gap-1.5 cursor-pointer">
                   <span>Acessar NIO</span>
-                  <span className="group-hover:translate-x-1 transition-transform">→</span>
+                  <span className="group-hover:translate-x-0.5 transition-transform">→</span>
                 </button>
               </div>
               {reportButton('nio')}
@@ -341,42 +340,40 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
             {/* CARD 2: V.TAL */}
             <div
               onClick={() => onSelectCompany('vtal')}
-              className="group relative bg-white rounded-3xl border border-[#D5D5D5] hover:border-[#4F927F] p-7 transition-all duration-300 hover:shadow-xl cursor-pointer flex flex-col justify-between overflow-hidden"
+              className="group relative bg-white rounded-3xl border border-[#D8DCE0] hover:border-[#242424] p-7 transition-all duration-200 hover:shadow-lg cursor-pointer flex flex-col justify-between overflow-hidden"
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-[#00D8F6]/10 rounded-full blur-2xl pointer-events-none group-hover:bg-[#00D8F6]/20 transition-all duration-500"></div>
-
               <div>
                 <div className="flex items-center justify-between mb-6">
-                  <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-md flex-shrink-0 bg-[#E5E7E6] p-1">
+                  <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-sm flex-shrink-0 bg-[#F3F4F6] border border-[#E5E7EB] p-1">
                     <CompanyLogo companyId="vtal" size="lg" className="w-full h-full" />
                   </div>
 
-                  <span className="text-[11px] font-semibold text-[#315F52] bg-[#4F927F]/15 px-2.5 py-1 rounded-lg border border-[#4F927F]/35">
+                  <span className="text-[11px] font-semibold text-[#3F3F46] bg-[#F4F4F5] px-2.5 py-1 rounded-lg border border-[#E4E4E7]">
                     Rede Neutra &amp; Infra
                   </span>
                 </div>
 
-                <h3 className="text-2xl font-black text-[#252525] group-hover:text-[#315F52] transition-colors">
+                <h3 className="text-2xl font-black text-[#18181B] group-hover:text-[#09090B] transition-colors">
                   {COMPANIES.vtal.name}
                 </h3>
-                <p className="text-xs font-semibold text-[#5E6562] mt-1 mb-3">
+                <p className="text-xs font-semibold text-[#52525B] mt-1 mb-2">
                   {COMPANIES.vtal.tagline}
                 </p>
               </div>
 
-              <div className="mt-8 pt-4 border-t border-[#F0ECE1] flex items-center justify-between">
-                <span className="text-xs text-[#52604D] font-medium">
+              <div className="mt-8 pt-4 border-t border-[#E5E7EB] flex items-center justify-between">
+                <span className="text-xs text-[#52525B] font-medium tabular-nums">
                   {savedCounts.vtal > 0 ? (
-                    <span className="text-[#0A192F] font-semibold">
+                    <span className="text-[#18181B] font-semibold">
                       ✓ {savedCounts.vtal} contas com notas
                     </span>
                   ) : (
                     'Pronto para preenchimento'
                   )}
                 </span>
-                <button className="bg-[#242424] text-white font-bold text-xs px-4 py-2 rounded-xl group-hover:bg-[#4F927F] group-hover:shadow-md transition-all flex items-center gap-1.5">
+                <button className="bg-[#242424] text-white font-bold text-xs px-4 py-2 rounded-xl group-hover:bg-[#3A3A3D] group-hover:shadow-sm transition-all flex items-center gap-1.5 cursor-pointer">
                   <span>Acessar V.tal</span>
-                  <span className="group-hover:translate-x-1 transition-transform">→</span>
+                  <span className="group-hover:translate-x-0.5 transition-transform">→</span>
                 </button>
               </div>
               {reportButton('vtal')}
@@ -385,42 +382,40 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
             {/* CARD 3: TECTO */}
             <div
               onClick={() => onSelectCompany('tecto')}
-              className="group relative bg-white rounded-3xl border border-[#D5D5D5] hover:border-[#4F927F] p-7 transition-all duration-300 hover:shadow-xl cursor-pointer flex flex-col justify-between overflow-hidden"
+              className="group relative bg-white rounded-3xl border border-[#D8DCE0] hover:border-[#242424] p-7 transition-all duration-200 hover:shadow-lg cursor-pointer flex flex-col justify-between overflow-hidden"
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-[#10B981]/10 rounded-full blur-2xl pointer-events-none group-hover:bg-[#10B981]/20 transition-all duration-500"></div>
-
               <div>
                 <div className="flex items-center justify-between mb-6">
-                  <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-md flex-shrink-0 bg-[#E5E7E6] p-1">
+                  <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-sm flex-shrink-0 bg-[#F3F4F6] border border-[#E5E7EB] p-1">
                     <CompanyLogo companyId="tecto" size="lg" className="w-full h-full" />
                   </div>
 
-                  <span className="text-[11px] font-semibold text-[#315F52] bg-[#4F927F]/15 px-2.5 py-1 rounded-lg border border-[#4F927F]/35">
+                  <span className="text-[11px] font-semibold text-[#3F3F46] bg-[#F4F4F5] px-2.5 py-1 rounded-lg border border-[#E4E4E7]">
                     Data Centers
                   </span>
                 </div>
 
-                <h3 className="text-2xl font-black text-[#252525] group-hover:text-[#315F52] transition-colors">
+                <h3 className="text-2xl font-black text-[#18181B] group-hover:text-[#09090B] transition-colors">
                   {COMPANIES.tecto.name}
                 </h3>
-                <p className="text-xs font-semibold text-[#4B5563] mt-1 mb-3">
+                <p className="text-xs font-semibold text-[#52525B] mt-1 mb-2">
                   {COMPANIES.tecto.tagline}
                 </p>
               </div>
 
-              <div className="mt-8 pt-4 border-t border-[#F0ECE1] flex items-center justify-between">
-                <span className="text-xs text-[#52604D] font-medium">
+              <div className="mt-8 pt-4 border-t border-[#E5E7EB] flex items-center justify-between">
+                <span className="text-xs text-[#52525B] font-medium tabular-nums">
                   {savedCounts.tecto > 0 ? (
-                    <span className="text-[#0F172A] font-semibold">
+                    <span className="text-[#18181B] font-semibold">
                       ✓ {savedCounts.tecto} contas com notas
                     </span>
                   ) : (
                     'Pronto para preenchimento'
                   )}
                 </span>
-                <button className="bg-[#242424] text-white font-bold text-xs px-4 py-2 rounded-xl group-hover:bg-[#4F927F] group-hover:shadow-md transition-all flex items-center gap-1.5">
+                <button className="bg-[#242424] text-white font-bold text-xs px-4 py-2 rounded-xl group-hover:bg-[#3A3A3D] group-hover:shadow-sm transition-all flex items-center gap-1.5 cursor-pointer">
                   <span>Acessar Tecto</span>
-                  <span className="group-hover:translate-x-1 transition-transform">→</span>
+                  <span className="group-hover:translate-x-0.5 transition-transform">→</span>
                 </button>
               </div>
               {reportButton('tecto')}
@@ -461,7 +456,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
             </div>
 
             <div className="mt-6">
-              <label htmlFor="report-month" className="block text-sm font-bold text-[#24352C] mb-2">
+              <label htmlFor="report-month" className="block text-sm font-bold text-[#18181B] mb-2">
                 Mês de referência
               </label>
               <input
@@ -470,9 +465,9 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
                 value={reportMonth}
                 onChange={(event) => setReportMonth(event.target.value)}
                 disabled={isGenerating}
-                className="w-full rounded-xl border border-[#B9C2BC] px-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#4F927F]/40 focus:border-[#4F927F]"
+                className="w-full rounded-xl border border-[#D1D5DB] px-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#242424]/25 focus:border-[#242424]"
               />
-              <p className="mt-2 text-xs leading-relaxed text-[#68716C]">
+              <p className="mt-2 text-xs leading-relaxed text-[#52525B]">
                 O arquivo usará os dados financeiros, os indicadores físicos e as justificativas já salvas para essa competência.
               </p>
               {reportError && (
@@ -485,7 +480,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
                 type="button"
                 disabled={isGenerating}
                 onClick={() => setReportCompany(null)}
-                className="px-4 py-2.5 rounded-xl text-sm font-bold text-[#4E5852] hover:bg-gray-100 disabled:opacity-40"
+                className="px-4 py-2.5 rounded-xl text-sm font-bold text-[#52525B] hover:bg-gray-100 disabled:opacity-40 cursor-pointer"
               >
                 Cancelar
               </button>
@@ -493,7 +488,7 @@ export const CompanyPortal: React.FC<CompanyPortalProps> = ({
                 type="button"
                 disabled={isGenerating || !reportMonth}
                 onClick={generateReport}
-                className="px-5 py-2.5 rounded-xl bg-[#242424] text-white text-sm font-bold hover:bg-[#315F52] disabled:opacity-50 flex items-center gap-2"
+                className="px-5 py-2.5 rounded-xl bg-[#242424] text-white text-sm font-bold hover:bg-[#3A3A3D] disabled:opacity-50 flex items-center gap-2 cursor-pointer"
               >
                 {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                 {isGenerating ? 'Gerando...' : 'Gerar Word'}

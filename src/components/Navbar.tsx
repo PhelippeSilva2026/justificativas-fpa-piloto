@@ -108,29 +108,29 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className={`sticky top-0 z-40 ${headerBgClass} text-white border-b shadow-md transition-colors duration-300`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
+      <div className="w-full px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
         {/* LOGO, BOTÃO INÍCIO E MARCA DA EMPRESA */}
         <div className="flex items-center gap-3">
-          {/* Botão de Retorno ao Portal Inicial */}
+          {/* Botão de Retorno para Fechamento e Justificativas */}
           <button
             type="button"
             onClick={onGoToPortal}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/15 transition-all shadow-xs cursor-pointer group"
-            title="Voltar para a tela inicial de seleção de empresas"
+            title="Voltar para Fechamento e Justificativas"
           >
             <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
-            <span className="hidden sm:inline">Início</span>
+            <span className="hidden sm:inline">Voltar</span>
           </button>
 
           {/* Logo da Empresa Selecionada */}
           <div className="flex items-center gap-3">
-            <div className={`flex items-center cursor-pointer ${currentCompany !== 'nio' ? 'bg-[#E5E7E6] rounded-xl p-1.5 shadow-sm' : ''}`} onClick={onGoToPortal} title="Clique para voltar ao Portal">
+            <div className={`flex items-center cursor-pointer ${currentCompany !== 'nio' ? 'bg-[#E5E7E6] rounded-xl p-1.5 shadow-sm' : ''}`} onClick={onGoToPortal} title="Voltar para Fechamento e Justificativas">
               <CompanyLogo companyId={currentCompany} size="md" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base sm:text-lg font-bold text-white tracking-tight leading-none">
-                  Plataforma de Inteligência Financeira | FP&amp;A
+                  Plataforma Financeira
                 </h1>
               </div>
             </div>

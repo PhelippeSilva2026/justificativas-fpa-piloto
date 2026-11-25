@@ -10,7 +10,8 @@ import { exportToPowerPoint } from './utils/pptxExport';
 import { calculateDREFromRaw, convertGcpRowsToWorkbook } from './utils/gcpConnector';
 import { COMPANIES, getCompanyWorkbook, getCompanySampleJustifications } from './utils/companyConfigs';
 import { isWithinReconciliationTolerance } from './utils/formatters';
-import { CompanyPortal } from './components/CompanyPortal';
+import { FinancialModuleId, PlatformPageId } from './config/modules';
+import { PlatformPageRouter } from './components/PlatformPageRouter';
 import { Navbar } from './components/Navbar';
 import { OrganizationFilterCard } from './components/OrganizationFilterCard';
 import { SelectionCard } from './components/SelectionCard';
@@ -61,6 +62,7 @@ export default function App() {
       ? (saved as CompanyId)
       : null;
   });
+  const [activePage, setActivePage] = useState<PlatformPageId>('hub');
 
   const currentCompanyConfig = activeCompany ? COMPANIES[activeCompany] : null;
 
@@ -366,6 +368,7 @@ export default function App() {
   // Seleção e alternância de empresa (NIO, V.tal, Tecto)
   const handleSelectCompany = (cid: CompanyId) => {
     const isSameCompany = activeCompany === cid;
+    setActivePage('closing-justifications');
     setActiveCompany(cid);
     localStorage.setItem('corp_active_company', cid);
 
@@ -409,6 +412,19 @@ export default function App() {
 
   const handleGoToPortal = () => {
     setActiveCompany(null);
+    setActivePage('closing-justifications');
+    localStorage.removeItem('corp_active_company');
+  };
+
+  const handleSelectModule = (moduleId: FinancialModuleId) => {
+    setActiveCompany(null);
+    setActivePage(moduleId);
+    localStorage.removeItem('corp_active_company');
+  };
+
+  const handleBackToHub = () => {
+    setActiveCompany(null);
+    setActivePage('hub');
     localStorage.removeItem('corp_active_company');
   };
 
@@ -991,13 +1007,16 @@ export default function App() {
     }
   };
 
-  // SE NENHUMA EMPRESA ESTIVER SELECIONADA: EXIBE A TELA INICIAL (PORTAL NIO | VTAL | TECTO)
+  // SE NENHUMA EMPRESA ESTIVER SELECIONADA: EXIBE O HUB PRINCIPAL OU O MÓDULO SELECIONADO
   if (!activeCompany) {
     return (
       <>
-        <CompanyPortal
-          onSelectCompany={handleSelectCompany}
+        <PlatformPageRouter
+          activePage={activePage}
           savedCounts={savedCounts}
+          onSelectModule={handleSelectModule}
+          onSelectCompany={handleSelectCompany}
+          onBackToHub={handleBackToHub}
         />
         {/* TOAST DE NOTIFICAÇÃO */}
         {toastMessage && (
@@ -1059,7 +1078,7 @@ export default function App() {
       {/* BARRA DE PROGRESSO E STATUS DE CARREGAMENTO (BIGQUERY + JUSTIFICATIVAS HISTÓRICAS) */}
       {(isAutoLoadingGcp || isLoadingJustifications) && (
         <div className="bg-[#14412A] text-[#D8FED4] border-b border-[#39FF00]/30 relative overflow-hidden">
-          <div className="max-w-7xl mx-auto px-4 py-2 text-xs flex items-center justify-between gap-3 font-medium">
+          <div className="w-full px-4 sm:px-6 lg:px-8 py-2 text-xs flex items-center justify-between gap-3 font-medium">
             <div className="flex items-center gap-2.5">
               <Loader2 className="w-4 h-4 animate-spin text-[#39FF00] shrink-0" />
               <span>
@@ -1189,7 +1208,7 @@ export default function App() {
       )}
 
       {/* CONTEÚDO PRINCIPAL */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6">
         {activeView === 'presentation' ? (
           /* ===================================================
              MODO APRESENTAÇÃO (SLIDE WIDESCREEN 16:9 TOTAL)

@@ -20,7 +20,40 @@ import {
 import { buildFastXlsxBuffer, queryBigQueryFast } from './server/excelExport';
 import { buildGroundedAgentPrompt, normalizeAgentReplyMarkdown } from './server/chatAgentPolicy';
 import { buildChatArtifact, extractAttachmentContext, requestedArtifactFormat, type ChatFilePayload } from './server/chatArtifacts';
+import { classifyAgentRoute } from './server/aiRouter';
+import { callClaudeAgent, isClaudeConfigured } from './server/claudeAgent';
 import { stripDeckSpec } from './server/dynamicDeck';
+import {
+  exportEnergyExcelBuffer,
+  getEnergyDashboardData,
+  getEnergyFilterOptions,
+  getEnergyLedgerPage,
+  getEnergyUfDrilldown,
+  type EnergyFilterParams,
+} from './server/energyAnalytics';
+import {
+  exportRealEstateExcelBuffer,
+  exportRealEstateExcelModelBuffer,
+  getRealEstateDashboardData,
+  getRealEstateExcelModelData,
+  getRealEstateFilterOptions,
+  getRealEstateLedgerPage,
+  getRealEstateUfDrilldown,
+  type RealEstateFilterParams,
+} from './server/realEstateAnalytics';
+import {
+  exportLegalExcelBuffer,
+  getLegalDashboardData,
+  getLegalFilterOptions,
+  getLegalLedgerPage,
+  type LegalFilterParams,
+} from './server/legalAnalytics';
+import {
+  exportPlanFinExcelBuffer,
+  getPlanFinDashboardData,
+  getPlanFinFilterOptions,
+  type PlanFinFilterParams,
+} from './server/planFinAnalytics';
 
 dotenv.config();
 EventEmitter.defaultMaxListeners = 100;
@@ -1887,13 +1920,29 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
       ? `\n\nINSTRUÇÃO PARA GERAR O ARQUIVO: além da resposta executiva normal, finalize com um plano de apresentação em JSON válido entre os marcadores <<<DECK_SPEC_JSON>>> e <<<END_DECK_SPEC_JSON>>>. O plano deve ser criado por você a partir da pergunta e dos arquivos: escolha livremente entre 3 e 15 slides de conteúdo, somente os necessários para contar a história. Não use roteiro fixo. Estrutura: {"title":"...","subtitle":"...","slides":[{"title":"Tema | Recorte","subtitle":"unidade e período","type":"summary|chart|table|recommendations|content","takeaway":"conclusão numérica","kpis":[{"label":"...","value":"...","note":"...","tone":"primary|positive|negative|neutral"}],"chart":{"type":"column|bar|line|stacked","categories":["..."],"series":[{"name":"...","values":[1,2]}]},"table":{"headers":["..."],"rows":[["...",1]]},"bullets":[{"title":"...","text":"..."}],"recommendations":[{"title":"...","detail":"...","badge":"..."}]}]}. Use números exatos dos dados; escolha gráficos coerentes; evite duplicar o mesmo insight; cada slide precisa de uma mensagem e, quando aplicável, uma conclusão no takeaway. O JSON é para o renderizador e não substitui a resposta ao usuário.`
       : '';
     const groundedPrompt = buildGroundedAgentPrompt(trimmedMsg + fileContext + deckPlanningInstruction, history);
+    const agentRoute = classifyAgentRoute(trimmedMsg);
     let agentReply: string | null = null;
     const agentFiles: ChatFilePayload[] = [];
     let citations: Array<{ title: string; url?: string; snippet?: string }> = [];
 
+    // Perguntas gerais e analises de arquivos usam Claude. Se a chave ainda nao estiver
+    // configurada, o fluxo existente do Gemini permanece como contingencia.
+    if (agentRoute === 'general' && isClaudeConfigured()) {
+      try {
+        agentReply = await callClaudeAgent({
+          prompt: groundedPrompt,
+          files: inputFiles,
+          purpose: 'general',
+        });
+        if (agentReply) console.log('[AI Router] Rota geral processada pelo provedor de apresentacoes.');
+      } catch (claudeError) {
+        console.warn('[AI Router] Falha na rota geral; usando contingencia GCP:', claudeError);
+      }
+    }
+
     // 1. TENTATIVA 1: Agente Executivo de FP&A no Cloud Run (fpa-a2a-agent / A2A Protocol)
     // Conecta automaticamente ao mesmo serviço chamado por '@ Agente Executivo de FP&A V.tal' no Gemini
-    if (defaultCredentials) {
+    if (!agentReply && defaultCredentials) {
       try {
         const auth = new GoogleAuth({ credentials: defaultCredentials as never });
         const a2aUrl = 'https://fpa-a2a-agent-7kylviopuq-uc.a.run.app';
@@ -2130,6 +2179,23 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
       }
     }
 
+    // Em pedidos corporativos, o Gemini/BigQuery continua sendo a fonte dos dados.
+    // O Claude recebe apenas a resposta governada para melhorar narrativa e planejar arquivos.
+    if (agentReply && agentRoute === 'corporate-data' && isClaudeConfigured()) {
+      try {
+        const governedReply = agentReply;
+        const synthesisPrompt = `${groundedPrompt}\n\nDADOS CORPORATIVOS GOVERNADOS JÁ CONSULTADOS PELO MECANISMO INTERNO:\n${governedReply}\n\nProduza a resposta final usando exclusivamente os dados acima. Preserve números, unidades, períodos e ressalvas.`;
+        const improved = await callClaudeAgent({
+          prompt: synthesisPrompt,
+          files: [],
+          purpose: 'corporate-synthesis',
+        });
+        if (improved) agentReply = improved;
+      } catch (claudeError) {
+        console.warn('[AI Router] Falha na sintese corporativa; preservando resposta governada:', claudeError);
+      }
+    }
+
     if (agentReply) {
       if (requestedFormat && agentFiles.length === 0) {
         try {
@@ -2143,7 +2209,7 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
         reply: stripDeckSpec(normalizeAgentReplyMarkdown(agentReply)),
         files: agentFiles,
         citations,
-        source: citations[0]?.title || 'bigquery-live'
+        source: 'Agente FP&A'
       });
     }
 
@@ -2165,6 +2231,533 @@ app.post('/api/agent/chat', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('[Chat Agent] Erro no processamento:', error);
     return res.status(500).json({ success: false, message: 'Erro interno ao processar chat.' });
+  }
+});
+
+function parseEnergyFiltersFromSource(source: Record<string, unknown>): EnergyFilterParams {
+  const str = (val: unknown) => (typeof val === 'string' && val.trim() ? val.trim() : undefined);
+  return {
+    anomes: str(source.anomes),
+    contrato: str(source.contrato),
+    uf: str(source.uf),
+    ufMode: source.ufMode === 'registered' ? 'registered' : 'consolidated',
+    centroCusto: str(source.centroCusto),
+    estacao: str(source.estacao),
+    fornecedor: str(source.fornecedor),
+    empresa: str(source.empresa),
+    tipoContrato: str(source.tipoContrato),
+    search: str(source.search),
+  };
+}
+
+app.get('/api/energy/filters', async (_req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const data = await getEnergyFilterOptions(bigquery);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Energy Filters] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/energy/dashboard', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseEnergyFiltersFromSource(req.query as Record<string, unknown>);
+    const data = await getEnergyDashboardData(bigquery, filters);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Energy Dashboard] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/energy/uf-drill', async (req: Request, res: Response) => {
+  const uf = typeof req.query.uf === 'string' ? req.query.uf.trim() : '';
+  if (!uf) {
+    return res.status(400).json({ success: false, message: 'Informe a UF para detalhamento.' });
+  }
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseEnergyFiltersFromSource(req.query as Record<string, unknown>);
+    const data = await getEnergyUfDrilldown(bigquery, uf, filters);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Energy UF Drill] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/energy/ledger', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseEnergyFiltersFromSource(req.query as Record<string, unknown>);
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 50);
+    const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'valor_abs';
+    const data = await getEnergyLedgerPage(bigquery, filters, { page, pageSize, sortBy });
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Energy Ledger] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.post('/api/energy/export-excel', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseEnergyFiltersFromSource((req.body || {}) as Record<string, unknown>);
+    const { buffer } = await exportEnergyExcelBuffer(bigquery, filters);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="Energia_ACTUAL_2026_Razao_Detalhado.xlsx"'
+    );
+    return res.send(buffer);
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Energy Export Excel] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+function parseRealEstateFiltersFromSource(source: Record<string, unknown>): RealEstateFilterParams {
+  const str = (val: unknown) => (typeof val === 'string' && val.trim() ? val.trim() : undefined);
+  return {
+    tipo: str(source.tipo),
+    anomes: str(source.anomes),
+    contrato: str(source.contrato),
+    uf: str(source.uf),
+    ufMode: source.ufMode === 'registered' ? 'registered' : 'consolidated',
+    centroCusto: str(source.centroCusto),
+    estacao: str(source.estacao),
+    fornecedor: str(source.fornecedor),
+    pais: str(source.pais),
+    tipoOperacao: str(source.tipoOperacao),
+    tipoRe: str(source.tipoRe),
+    classificacao: str(source.classificacao),
+    search: str(source.search),
+  };
+}
+
+app.get('/api/real-estate/filters', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const tipo = typeof req.query.tipo === 'string' && req.query.tipo.trim() ? req.query.tipo.trim() : 'ACTUAL 2026';
+    const data = await getRealEstateFilterOptions(bigquery, tipo);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Real Estate Filters] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/real-estate/dashboard', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseRealEstateFiltersFromSource(req.query as Record<string, unknown>);
+    const data = await getRealEstateDashboardData(bigquery, filters);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Real Estate Dashboard] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/real-estate/uf-drill', async (req: Request, res: Response) => {
+  const uf = typeof req.query.uf === 'string' ? req.query.uf.trim() : '';
+  if (!uf) {
+    return res.status(400).json({ success: false, message: 'Informe a UF para detalhamento.' });
+  }
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseRealEstateFiltersFromSource(req.query as Record<string, unknown>);
+    const data = await getRealEstateUfDrilldown(bigquery, uf, filters);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Real Estate UF Drill] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/real-estate/ledger', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseRealEstateFiltersFromSource(req.query as Record<string, unknown>);
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 50);
+    const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'valor_abs';
+    const data = await getRealEstateLedgerPage(bigquery, filters, { page, pageSize, sortBy });
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Real Estate Ledger] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.post('/api/real-estate/export-excel', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseRealEstateFiltersFromSource((req.body || {}) as Record<string, unknown>);
+    const { buffer } = await exportRealEstateExcelBuffer(bigquery, filters);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="Real_Estate_Razao_Detalhado.xlsx"'
+    );
+    return res.send(buffer);
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Real Estate Export Excel] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/real-estate/excel-model', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const actCutoffMonth = Number(req.query.actCutoffMonth || 10);
+    const includeOverheadCc = req.query.includeOverheadCc !== 'false';
+    const data = await getRealEstateExcelModelData(bigquery, {
+      actCutoffMonth,
+      includeOverheadCc,
+    });
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Real Estate Excel Model] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.post('/api/real-estate/export-model-excel', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const body = (req.body || {}) as Record<string, unknown>;
+    const actCutoffMonth = Number(body.actCutoffMonth || 10);
+    const includeOverheadCc = body.includeOverheadCc !== false;
+    const excelSign = body.excelSign !== false;
+    const { buffer } = await exportRealEstateExcelModelBuffer(bigquery, {
+      actCutoffMonth,
+      includeOverheadCc,
+      excelSign,
+    });
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="Real_Estate_Modelo_Base_PL_2026.xlsx"'
+    );
+    return res.send(buffer);
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Real Estate Export Model Excel] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+function parseLegalFiltersFromSource(source: Record<string, unknown>): LegalFilterParams {
+  const str = (val: unknown) => (typeof val === 'string' && val.trim() ? val.trim() : undefined);
+  return {
+    classificacao: str(source.classificacao),
+    diretoria: str(source.diretoria),
+    gerencia: str(source.gerencia) || str(source.gerente),
+    descricao: str(source.descricao),
+    pais: str(source.pais),
+    centroCusto: str(source.centroCusto),
+    fornecedor: str(source.fornecedor),
+    contaRazao: str(source.contaRazao),
+    pedidoCompra: str(source.pedidoCompra),
+    atribuicao: str(source.atribuicao),
+    anomes: str(source.anomes),
+    search: str(source.search),
+    ledgerTipo: str(source.ledgerTipo),
+  };
+}
+
+app.get('/api/legal/filters', async (_req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const data = await getLegalFilterOptions(bigquery);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Legal Filters] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+function normalizeJustificationImpacts(raw: unknown): Array<{
+  id: string;
+  name: string;
+  value: number;
+  justification: string;
+}> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item, idx) => {
+      const obj = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+      const name = String(obj.name || 'Desvio').trim();
+      const value = Number(obj.value);
+      const safeValue = Number.isFinite(value) ? value : 0;
+      const justification = String(obj.justification || '').trim();
+      return {
+        id: String(obj.id || `impact-${idx}`),
+        name,
+        value: safeValue,
+        justification,
+      };
+    })
+    .filter((item) => item.justification.length > 0 || Math.abs(item.value) >= 1);
+}
+
+interface LegalDashboardLike {
+  refMonth: number;
+  byClassification: Array<{ classificacao: string } & Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+async function enrichLegalDashboardWithJustifications(
+  data: LegalDashboardLike,
+  filters: LegalFilterParams
+): Promise<LegalDashboardLike & { justificationsPeriod?: string }> {
+  const explicitPeriod =
+    filters.anomes && filters.anomes !== 'ALL' ? normalizeReportPeriod(filters.anomes) : null;
+  const requestedPeriod = explicitPeriod || `2026/${data.refMonth}`;
+
+  try {
+    const cacheItem = await getCompanyEntriesFast('vtal', false);
+    const entries = Object.values(cacheItem.entriesByPath || {});
+
+    // Indexar entradas do bucket pela classificação FP&A, priorizando AREA = Legal
+    const entryByClassif = new Map<string, Record<string, unknown>>();
+    for (const entry of entries) {
+      const rMeta = entry.row as Record<string, unknown> | undefined;
+      const area = String(rMeta?.area || '').trim().toLowerCase();
+      const classif = String((rMeta && rMeta.n3) || entry.classification || '')
+        .trim()
+        .toLowerCase();
+      if (!classif) continue;
+      if (area === 'legal' || !entryByClassif.has(classif)) {
+        entryByClassif.set(classif, entry);
+      }
+    }
+
+    const matchedEntries = data.byClassification
+      .map((c) => entryByClassif.get(c.classificacao.trim().toLowerCase()))
+      .filter((e): e is Record<string, unknown> => Boolean(e));
+
+    let effectivePeriod = requestedPeriod;
+    let isFallbackPeriod = false;
+
+    // Se "Todos os meses" estiver ativo e o mês corrente (ex: 2026/11) ainda não tiver
+    // justificativas fechadas no bucket, exibe o último fechamento disponível (ex: 2026/10)
+    if (!explicitPeriod && matchedEntries.length > 0) {
+      const hasAnyForRequested = matchedEntries.some((entry) => {
+        const resolved = resolveEntryForPeriod(entry, requestedPeriod);
+        if (!resolved) return false;
+        return (
+          normalizeJustificationImpacts(resolved.vsOrcadoImpacts).length > 0 ||
+          normalizeJustificationImpacts(resolved.momImpacts).length > 0 ||
+          normalizeJustificationImpacts(resolved.ytdImpacts).length > 0
+        );
+      });
+
+      if (!hasAnyForRequested) {
+        const reqOrder = parsePeriodSortKey(requestedPeriod);
+        const candidatePeriods = new Set<string>();
+        for (const entry of matchedEntries) {
+          const rawPeriods =
+            entry.periods && typeof entry.periods === 'object'
+              ? (entry.periods as Record<string, unknown>)
+              : {};
+          for (const pKey of Object.keys(rawPeriods)) {
+            const norm = normalizeReportPeriod(pKey);
+            if (norm && (reqOrder === 0 || parsePeriodSortKey(norm) <= reqOrder)) {
+              candidatePeriods.add(norm);
+            }
+          }
+        }
+        const sortedCandidates = Array.from(candidatePeriods).sort(
+          (a, b) => parsePeriodSortKey(b) - parsePeriodSortKey(a)
+        );
+        if (sortedCandidates.length > 0) {
+          effectivePeriod = sortedCandidates[0];
+          isFallbackPeriod = true;
+        }
+      }
+    }
+
+    const enrichedByClassification = data.byClassification.map((row) => {
+      const entry = entryByClassif.get(row.classificacao.trim().toLowerCase());
+      if (!entry) {
+        return {
+          ...row,
+          justifications: {
+            period: effectivePeriod,
+            isFallbackPeriod,
+            vsOrcadoImpacts: [],
+            momImpacts: [],
+            ytdImpacts: [],
+          },
+        };
+      }
+
+      const resolved = resolveEntryForPeriod(entry, effectivePeriod);
+      const periodMetaMap =
+        entry.periodMetadata && typeof entry.periodMetadata === 'object'
+          ? (entry.periodMetadata as Record<string, Record<string, unknown>>)
+          : {};
+      const periodMeta = periodMetaMap[effectivePeriod] || {};
+
+      return {
+        ...row,
+        justifications: {
+          period: effectivePeriod,
+          isFallbackPeriod,
+          updatedAt: typeof periodMeta.updatedAt === 'string' ? periodMeta.updatedAt : undefined,
+          updatedBy: typeof periodMeta.updatedBy === 'string' ? periodMeta.updatedBy : undefined,
+          vsOrcadoImpacts: normalizeJustificationImpacts(resolved?.vsOrcadoImpacts),
+          momImpacts: normalizeJustificationImpacts(resolved?.momImpacts),
+          ytdImpacts: normalizeJustificationImpacts(resolved?.ytdImpacts),
+        },
+      };
+    });
+
+    return {
+      ...data,
+      justificationsPeriod: effectivePeriod,
+      byClassification: enrichedByClassification,
+    };
+  } catch (err) {
+    console.warn('[Legal Justifications] Falha ao anexar justificativas:', err);
+    return {
+      ...data,
+      justificationsPeriod: requestedPeriod,
+    };
+  }
+}
+
+app.get('/api/legal/dashboard', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseLegalFiltersFromSource(req.query as Record<string, unknown>);
+    const rawData = (await getLegalDashboardData(bigquery, filters)) as LegalDashboardLike;
+    const data = await enrichLegalDashboardWithJustifications(rawData, filters);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Legal Dashboard] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/legal/ledger', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseLegalFiltersFromSource(req.query as Record<string, unknown>);
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 50);
+    const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'valor_abs';
+    const data = await getLegalLedgerPage(bigquery, filters, { page, pageSize, sortBy });
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Legal Ledger] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.post('/api/legal/export-excel', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parseLegalFiltersFromSource((req.body || {}) as Record<string, unknown>);
+    const { buffer } = await exportLegalExcelBuffer(bigquery, filters);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="Legal_Governanca_Razao_2026.xlsx"'
+    );
+    return res.send(buffer);
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Legal Export Excel] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+function parsePlanFinFiltersFromSource(source: Record<string, unknown>): PlanFinFilterParams {
+  const str = (val: unknown) => (typeof val === 'string' && val.trim() ? val.trim() : undefined);
+  return {
+    anomes: str(source.anomes),
+    pacote: str(source.pacote),
+    subPacote: str(source.subPacote),
+  };
+}
+
+app.get('/api/plan-fin/filters', async (_req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const data = await getPlanFinFilterOptions(bigquery);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Plan Fin Filters] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.get('/api/plan-fin/dashboard', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parsePlanFinFiltersFromSource(req.query as Record<string, unknown>);
+    const data = await getPlanFinDashboardData(bigquery, filters);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Plan Fin Dashboard] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
+  }
+});
+
+app.post('/api/plan-fin/export-excel', async (req: Request, res: Response) => {
+  try {
+    const bigquery = getBigQueryClient({ projectId: 'vtal-fpea-prd', credentials: defaultCredentials });
+    const filters = parsePlanFinFiltersFromSource((req.body || {}) as Record<string, unknown>);
+    const { buffer } = await exportPlanFinExcelBuffer(bigquery, filters);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="Plan_Fin_Executivo_Vtal_OPEX_2026.xlsx"'
+    );
+    return res.send(buffer);
+  } catch (error: unknown) {
+    const formatted = formatBigQueryError(error, 'vtal-fpea-prd');
+    console.error('[Plan Fin Export Excel] Erro:', error);
+    return res.status(500).json({ success: false, message: formatted.message });
   }
 });
 
