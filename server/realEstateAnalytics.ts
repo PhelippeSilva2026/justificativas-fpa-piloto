@@ -2,7 +2,7 @@ import { BigQuery } from '@google-cloud/bigquery';
 import { buildFastXlsxBuffer, queryBigQueryFast } from './excelExport';
 import { fixMojibake } from './energyAnalytics';
 
-const DRE_FINAL_TABLE = '`vtal-fpea-prd.agente_fpa.DRE_FINAL`';
+const DRE_FINAL_TABLE = '`vtal-fpea-prd.419556.DRE_FINAL`';
 
 const VALID_UFS = [
   'AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO',
